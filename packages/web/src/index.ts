@@ -12,6 +12,8 @@ import {
   AgentTransform,
   AIMessageChunkTransform,
   HumeTTSTransform,
+  LangChainAudioReadableStream,
+  PipelineVisualizer,
   // ElevenLabsTTSTransform,
   // SentenceChunkTransform,
 } from "./transforms";
@@ -22,11 +24,38 @@ const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
 app.use("/*", cors());
 
+// Shared pipeline visualizer for WebSocket streaming
+const pipelineVisualizer = new PipelineVisualizer();
+
 // Serve static HTML
 const htmlPath = join(process.cwd(), "src/static/index.html");
 const html = readFileSync(htmlPath, "utf-8");
 
+// Serve pipeline visualizer JS
+const visualizerJsPath = join(process.cwd(), "src/static/pipeline-visualizer.js");
+const visualizerJs = readFileSync(visualizerJsPath, "utf-8");
+
 app.get("/", (c) => c.html(html));
+
+app.get("/pipeline-visualizer.js", (c) => {
+  c.header("Content-Type", "application/javascript");
+  return c.body(visualizerJs);
+});
+
+// Pipeline visualizer WebSocket endpoint
+app.get(
+  "/ws/pipeline",
+  upgradeWebSocket(() => ({
+    onOpen(_evt, ws) {
+      console.log("Pipeline visualizer connected");
+      pipelineVisualizer.setWebSocket(ws);
+    },
+    onClose() {
+      console.log("Pipeline visualizer disconnected");
+      pipelineVisualizer.clearWebSocket();
+    },
+  }))
+);
 
 app.get(
   "/ws",
@@ -38,7 +67,12 @@ app.get(
       },
     });
 
-    const pipeline = inputStream
+    const observableStream = new LangChainAudioReadableStream(inputStream, {
+      visualizer: pipelineVisualizer, // Stream metrics to frontend
+      turnIdleThresholdMs: 1000, // New "turn" after 1s of inactivity per stage
+    });
+
+    const pipeline = observableStream
       .pipeThrough(
         new AssemblyAISTTTransform({
           apiKey: process.env.ASSEMBLYAI_API_KEY!,

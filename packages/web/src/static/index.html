@@ -4,63 +4,183 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Voice Sandwich</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
+        * {
+            box-sizing: border-box;
+        }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            max-width: 600px;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            margin: 0;
+            padding: 24px;
+            background: #fafafa;
+            min-height: 100vh;
+            color: #171717;
+        }
+        .container {
+            max-width: 1100px;
             margin: 0 auto;
-            padding: 2rem 1rem;
-            text-align: center;
-            background-color: #f4f4f9;
-            color: #333;
+            display: grid;
+            grid-template-columns: 400px 1fr;
+            gap: 24px;
         }
-        h1 { margin-bottom: 2rem; }
+        @media (max-width: 900px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+        }
+        .panel {
+            background: #fff;
+            border: 1px solid #e5e5e5;
+            border-radius: 12px;
+            padding: 24px;
+        }
+        .controls-panel {
+            display: flex;
+            flex-direction: column;
+        }
+        h1 { 
+            margin: 0 0 24px 0;
+            font-size: 20px;
+            font-weight: 600;
+            color: #171717;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .button-group {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
         button {
-            padding: 0.75rem 1.5rem;
-            font-size: 1rem;
-            cursor: pointer;
-            border: none;
-            border-radius: 4px;
-            margin: 0 0.5rem;
-            transition: background-color 0.2s;
-        }
-        #startBtn { background-color: #28a745; color: white; }
-        #startBtn:disabled { background-color: #95d6a4; cursor: not-allowed; }
-        #stopBtn { background-color: #dc3545; color: white; }
-        #stopBtn:disabled { background-color: #e9aeb3; cursor: not-allowed; }
-        #status {
-            margin-top: 2rem;
+            padding: 10px 16px;
+            font-size: 14px;
             font-weight: 500;
-            color: #555;
-            min-height: 1.5em;
+            font-family: inherit;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: all 0.15s ease;
+            flex: 1;
+        }
+        #startBtn { 
+            background: #171717;
+            color: #fff;
+            border: 1px solid #171717;
+        }
+        #startBtn:hover:not(:disabled) {
+            background: #404040;
+            border-color: #404040;
+        }
+        #startBtn:disabled { 
+            background: #f5f5f5;
+            color: #a3a3a3;
+            border-color: #e5e5e5;
+            cursor: not-allowed;
+        }
+        #stopBtn { 
+            background: #fff;
+            color: #171717;
+            border: 1px solid #e5e5e5;
+        }
+        #stopBtn:hover:not(:disabled) {
+            background: #fafafa;
+            border-color: #d4d4d4;
+        }
+        #stopBtn:disabled { 
+            background: #fafafa;
+            color: #a3a3a3;
+            border-color: #e5e5e5;
+            cursor: not-allowed;
+        }
+        .status-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 16px;
+            padding: 10px 12px;
+            background: #fafafa;
+            border: 1px solid #e5e5e5;
+            border-radius: 8px;
+            font-size: 13px;
+            color: #525252;
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #a3a3a3;
+        }
+        .status-dot.connected {
+            background: #22c55e;
+        }
+        .status-dot.recording {
+            background: #ef4444;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .log-header {
+            font-size: 12px;
+            font-weight: 500;
+            color: #737373;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
         }
         .log {
             text-align: left;
-            background: #fff;
-            border: 1px solid #ddd;
-            padding: 1rem;
-            margin-top: 2rem;
-            height: 300px;
+            background: #fafafa;
+            border: 1px solid #e5e5e5;
+            padding: 12px;
+            height: 280px;
             overflow-y: auto;
-            border-radius: 4px;
-            font-family: monospace;
-            font-size: 0.9rem;
+            border-radius: 8px;
+            font-family: 'Geist Mono', 'SF Mono', monospace;
+            font-size: 12px;
+            color: #525252;
+        }
+        .log div {
+            padding: 3px 0;
+            border-bottom: 1px solid #f5f5f5;
+        }
+        .log div:last-child {
+            border-bottom: none;
+        }
+        pipeline-visualizer {
+            display: block;
         }
     </style>
 </head>
 <body>
-    <h1>🥪 Voice Sandwich</h1>
-    <div>
-        <button id="startBtn">Start Recording</button>
-        <button id="stopBtn" disabled>Stop Recording</button>
+    <div class="container">
+        <div class="panel controls-panel">
+            <h1>🥪 Voice Sandwich</h1>
+            <div class="button-group">
+                <button id="startBtn">Start Recording</button>
+                <button id="stopBtn" disabled>Stop</button>
+            </div>
+            <div class="status-bar">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="status">Ready</span>
+            </div>
+            <div class="log-header">Console</div>
+            <div class="log" id="log"></div>
+        </div>
+        <pipeline-visualizer></pipeline-visualizer>
     </div>
-    <div id="status">Ready</div>
-    <div class="log" id="log"></div>
+    
+    <script src="/pipeline-visualizer.js"></script>
 
     <script>
         const startBtn = document.getElementById('startBtn');
         const stopBtn = document.getElementById('stopBtn');
         const statusDiv = document.getElementById('status');
+        const statusDot = document.getElementById('statusDot');
         const logDiv = document.getElementById('log');
         
         let ws;
@@ -73,9 +193,16 @@
 
         function log(msg) {
             const p = document.createElement('div');
-            p.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            p.textContent = `${new Date().toLocaleTimeString()} → ${msg}`;
             logDiv.appendChild(p);
             logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function setStatus(text, state = 'idle') {
+            statusDiv.innerText = text;
+            statusDot.className = 'status-dot';
+            if (state === 'connected') statusDot.classList.add('connected');
+            if (state === 'recording') statusDot.classList.add('recording');
         }
 
         // AudioWorkletProcessor code as a string (will be loaded via Blob URL)
@@ -138,11 +265,11 @@
             await audioContext.audioWorklet.addModule(workletUrl);
             URL.revokeObjectURL(workletUrl);
             
-            log(`AudioContext sample rate: ${audioContext.sampleRate}Hz`);
+            log(`Audio initialized (${audioContext.sampleRate}Hz)`);
         }
 
         startBtn.onclick = async () => {
-            statusDiv.innerText = 'Connecting...';
+            setStatus('Connecting...', 'idle');
             startBtn.disabled = true;
             
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -150,8 +277,8 @@
             ws.binaryType = 'arraybuffer';
             
             ws.onopen = async () => {
-                statusDiv.innerText = 'Connected. Recording...';
-                log('WebSocket connected');
+                setStatus('Recording', 'recording');
+                log('Connected to server');
                 stopBtn.disabled = false;
 
                 try {
@@ -172,7 +299,7 @@
                             autoGainControl: true,
                         }
                     });
-                    log('Microphone access granted');
+                    log('Microphone active');
                     
                     // Create source from microphone
                     const source = audioContext.createMediaStreamSource(mediaStream);
@@ -191,11 +318,11 @@
                     source.connect(workletNode);
                     // Don't connect to destination (we don't want to hear ourselves)
                     
-                    log('Streaming PCM audio (16kHz, 16-bit, mono)');
+                    log('Streaming audio (16kHz PCM)');
                 } catch (err) {
                     console.error(err);
-                    log('Error accessing microphone: ' + err.message);
-                    statusDiv.innerText = 'Error';
+                    log('Microphone error: ' + err.message);
+                    setStatus('Error', 'idle');
                     resetUI();
                 }
             };
@@ -249,25 +376,25 @@
                         console.error('Error processing audio chunk', e);
                     }
                 } else {
-                    log('Received message: ' + event.data);
+                    log('Server: ' + event.data);
                 }
             };
 
             ws.onclose = () => {
-                statusDiv.innerText = 'Disconnected';
-                log('WebSocket disconnected');
+                setStatus('Disconnected', 'idle');
+                log('Connection closed');
                 resetUI();
             };
             
             ws.onerror = (e) => {
                 console.error(e);
-                log('WebSocket error');
-                statusDiv.innerText = 'Error';
+                log('Connection error');
+                setStatus('Error', 'idle');
             };
         };
 
         stopBtn.onclick = () => {
-            log('Stopping recording...');
+            log('Stopping...');
             
             // Disconnect worklet
             if (workletNode) {
@@ -287,6 +414,7 @@
         function resetUI() {
             startBtn.disabled = false;
             stopBtn.disabled = true;
+            setStatus('Ready', 'idle');
             // We do NOT reset nextStartTime here because audio might still be queued playing!
             // We do NOT close audioContext because that kills pending audio and worklet.
         }
