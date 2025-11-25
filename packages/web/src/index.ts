@@ -8,6 +8,10 @@ import { cors } from "hono/cors";
 import { join } from "path";
 
 import {
+  TracedReadableStream,
+  TracedTransformStream,
+} from "./TracedReadableStream";
+import {
   VADBufferTransform,
   OpenAISTTTransform,
   AgentTransform,
@@ -38,24 +42,30 @@ app.get(
       },
     });
 
+    const tracedInputStream = new TracedReadableStream(inputStream);
+
     // Pipeline
-    const pipeline = inputStream
+    const pipeline = tracedInputStream
       .pipeThrough(new OpusToPcmTransform())
       .pipeThrough(new VADBufferTransform())
       .pipeThrough(
-        new OpenAISTTTransform({
-          apiKey: process.env.OPENAI_API_KEY!,
-          model: "whisper-1",
-        })
+        new TracedTransformStream(
+          new OpenAISTTTransform({
+            apiKey: process.env.OPENAI_API_KEY!,
+            model: "whisper-1",
+          })
+        )
       )
-      .pipeThrough(new AgentTransform(agent))
-      .pipeThrough(new AIMessageChunkTransform())
+      .pipeThrough(new TracedTransformStream(new AgentTransform(agent)))
+      .pipeThrough(new TracedTransformStream(new AIMessageChunkTransform()))
       // .pipeThrough(new SentenceChunkTransform())
       .pipeThrough(
-        new ElevenLabsTTSTransform({
-          apiKey: process.env.ELEVENLABS_API_KEY!,
-          voiceId: process.env.ELEVENLABS_VOICE_ID!,
-        })
+        new TracedTransformStream(
+          new ElevenLabsTTSTransform({
+            apiKey: process.env.ELEVENLABS_API_KEY!,
+            voiceId: process.env.ELEVENLABS_VOICE_ID!,
+          })
+        )
       );
 
     const reader = pipeline.getReader();

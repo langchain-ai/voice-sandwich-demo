@@ -7,19 +7,19 @@ import { randomUUID } from "node:crypto";
  * Output: AI Tokens (String) - Streamed
  */
 export class AgentTransform extends TransformStream<string, AIMessageChunk> {
-  constructor(graph: ReactAgent) {
+  constructor(agent: ReactAgent) {
     const threadId = randomUUID();
 
     super({
       async transform(text, controller) {
-        const graphStream = await graph.stream(
+        const agentStream = await agent.stream(
           { messages: [new HumanMessage(text)] },
           {
             configurable: { thread_id: threadId },
             streamMode: "messages",
           }
         );
-        for await (const [chunk] of graphStream) {
+        for await (const [chunk] of agentStream) {
           if (AIMessageChunk.isInstance(chunk)) {
             controller.enqueue(chunk);
           }
