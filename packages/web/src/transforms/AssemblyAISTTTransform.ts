@@ -1,10 +1,16 @@
 import querystring from "querystring";
+
 import WebSocket from "ws";
 
 interface AssemblyAISTTOptions {
   apiKey: string;
   sampleRate?: number;
   formatTurns?: boolean;
+  /**
+   * Callback when speech is detected (partial transcript received).
+   * Useful for implementing barge-in to interrupt TTS.
+   */
+  onSpeechStart?: () => void;
 }
 
 interface BeginMessage {
@@ -38,13 +44,16 @@ type AssemblyAIMessage = BeginMessage | TurnMessage | TerminationMessage;
  */
 export class AssemblyAISTTTransform extends TransformStream<Buffer, string> {
   constructor(options: AssemblyAISTTOptions) {
-    const { apiKey, sampleRate = 16000, formatTurns = true } = options;
+    const { apiKey, sampleRate = 16000, formatTurns = true, onSpeechStart } = options;
 
     let ws: WebSocket | null = null;
     let connectionPromise: Promise<void> | null = null;
     let activeController: TransformStreamDefaultController<string> | null =
       null;
     let sessionId: string | null = null;
+    
+    // Track if we've already signaled speech start for current utterance
+    let speechStartSignaled = false;
 
     const resetConnection = () => {
       if (ws) {
@@ -106,10 +115,18 @@ export class AssemblyAISTTTransform extends TransformStream<Buffer, string> {
                       activeController.enqueue(message.transcript);
                     }
                   }
+                  // Reset speech start flag for next utterance
+                  speechStartSignaled = false;
                 } else {
                   // Partial transcript - log for debugging
                   if (message.transcript) {
                     console.log(`AssemblyAI [partial]: "${message.transcript}"`);
+                    
+                    // Signal speech start for barge-in (only once per utterance)
+                    if (!speechStartSignaled && message.transcript.trim().length > 0) {
+                      speechStartSignaled = true;
+                      onSpeechStart?.();
+                    }
                   }
                 }
                 break;

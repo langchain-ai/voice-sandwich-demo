@@ -203,6 +203,9 @@
         let workletNode;
         let mediaStream;
         let nextStartTime = 0;
+        
+        // Track scheduled audio sources for barge-in interruption
+        let scheduledAudioSources = [];
 
         const TARGET_SAMPLE_RATE = 16000;
 
@@ -336,6 +339,24 @@
             }
         }
 
+        // Clear all scheduled audio (for barge-in)
+        function clearAudioBuffer() {
+            log('Clearing audio buffer (barge-in)');
+            
+            // Stop all scheduled audio sources
+            for (const source of scheduledAudioSources) {
+                try {
+                    source.stop();
+                } catch (e) {
+                    // Source might have already finished, ignore
+                }
+            }
+            scheduledAudioSources = [];
+            
+            // Reset next start time to allow immediate playback of new audio
+            nextStartTime = 0;
+        }
+
         function handleIncomingAudio(data) {
             // We expect audio buffers from the server (PCM 16000Hz 16-bit Mono)
             if (data instanceof ArrayBuffer) {
@@ -382,10 +403,38 @@
                         
                         source.start(startTime);
                         nextStartTime = startTime + audioBuffer.duration;
+                        
+                        // Track this source for potential barge-in cancellation
+                        scheduledAudioSources.push(source);
+                        
+                        // Clean up finished sources from the list
+                        source.onended = () => {
+                            const idx = scheduledAudioSources.indexOf(source);
+                            if (idx > -1) {
+                                scheduledAudioSources.splice(idx, 1);
+                            }
+                        };
                     } catch (e) {
                         console.error('Error processing audio chunk', e);
                     }
                 })();
+            }
+        }
+        
+        function handleDataChannelMessage(data) {
+            if (data instanceof ArrayBuffer) {
+                // Binary data = audio
+                handleIncomingAudio(data);
+            } else if (typeof data === 'string') {
+                // JSON control message
+                try {
+                    const message = JSON.parse(data);
+                    if (message.type === 'clear-audio') {
+                        clearAudioBuffer();
+                    }
+                } catch (e) {
+                    console.warn('Unknown string message:', data);
+                }
             }
         }
 
@@ -445,7 +494,7 @@
                     };
                     
                     audioDataChannel.onmessage = (event) => {
-                        handleIncomingAudio(event.data);
+                        handleDataChannelMessage(event.data);
                     };
                     
                     audioDataChannel.onclose = () => {
