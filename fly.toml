@@ -1,7 +1,5 @@
-# fly.toml app configuration file for voice-sandwich-demo
-#
+# fly.toml - Fly.io configuration for voice-sandwich-demo (WebRTC optimized)
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
 
 app = 'voice-sandwich-demo'
 primary_region = 'sjc'
@@ -12,11 +10,16 @@ primary_region = 'sjc'
   NODE_ENV = 'production'
   PORT = '3001'
 
+# =============================================================================
+# HTTP Service - Handles WebSocket signaling and static files
+# =============================================================================
 [http_service]
   internal_port = 3001
   force_https = true
+  # Use 'suspend' instead of 'stop' - faster wake-up for real-time apps
   auto_stop_machines = 'suspend'
   auto_start_machines = true
+  # Keep at least 1 machine running to avoid cold starts during calls
   min_machines_running = 1
   processes = ['app']
 
@@ -25,12 +28,14 @@ primary_region = 'sjc'
     hard_limit = 50
     soft_limit = 25
 
+  # WebSocket and HTTP options
   [http_service.http_options]
     h2_backend = false
+    # Increase idle timeout for long-running WebSocket/WebRTC connections
     idle_timeout = 300
 
 # =============================================================================
-# UDP Service - WebRTC ICE/STUN traffic
+# UDP Service - WebRTC ICE/STUN traffic (ports 10000-10100)
 # =============================================================================
 [[services]]
   protocol = 'udp'
@@ -46,3 +51,20 @@ primary_region = 'sjc'
   memory = '2gb'
   cpu_kind = 'shared'
   cpus = 2
+
+# =============================================================================
+# Statics - Serve static files efficiently (optional optimization)
+# =============================================================================
+# [[statics]]
+#   guest_path = '/app/packages/webrtc/src/static'
+#   url_prefix = '/static'
+
+# =============================================================================
+# Health Check - Basic endpoint check
+# =============================================================================
+[[http_service.checks]]
+  grace_period = '30s'
+  interval = '30s'
+  method = 'GET'
+  path = '/'
+  timeout = '10s'
