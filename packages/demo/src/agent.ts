@@ -55,7 +55,6 @@ export function createSandwichShopVoiceAgent(params: CreateVoiceAgentParams) {
         }
       },
     }),
-    transport: "webrtc",
     middleware: [fillerMiddleware],
 
     // Callbacks

@@ -16,11 +16,6 @@ import {
 import { type BaseSpeechToTextModel, type BaseTextToSpeechModel } from "./models.js";
 
 /**
- * Transport type for the voice agent.
- */
-export type VoiceTransport = "webrtc" | "websocket";
-
-/**
  * Parameters for creating a voice agent.
  * Extends LangChain's CreateAgentParams with voice-specific options.
  */
@@ -29,8 +24,6 @@ export interface CreateVoiceAgentParams extends CreateAgentParams {
   stt: BaseSpeechToTextModel;
   /** Text-to-Speech model for generating audio output */
   tts: BaseTextToSpeechModel;
-  /** Transport layer to use (webrtc or websocket) */
-  transport: VoiceTransport;
   /** Optional middleware for customizing the pipeline */
   middleware?: VoiceMiddleware[];
   /** Callback when an interrupt occurs */
@@ -45,8 +38,6 @@ export interface CreateVoiceAgentParams extends CreateAgentParams {
 export interface VoiceAgent {
   /** The underlying LangGraph agent */
   readonly agent: ReactAgent;
-  /** The transport type being used */
-  readonly transport: VoiceTransport;
   /** The TTS model (useful for interrupt/barge-in control) */
   readonly tts: BaseTextToSpeechModel;
   /** The STT model */
@@ -87,8 +78,7 @@ interface VoiceAgentState {
  *   
  *   // Voice-specific params
  *   stt: new AssemblyAISpeechToText({ apiKey: "..." }),
- *   tts: new ElevenLabsTextToSpeech({ apiKey: "...", voiceId: "..." }),
- *   transport: "webrtc",
+ *   tts: new ElevenLabsTextToSpeech({ apiKey: "...", voiceId: "..." })
  * });
  * 
  * const audioOutput = voiceAgent.process(audioInput);
@@ -98,7 +88,6 @@ export function createVoiceAgent(params: CreateVoiceAgentParams): VoiceAgent {
   const { 
     stt, 
     tts, 
-    transport, 
     middleware = [], 
     onInterrupt, 
     onHangUp,
@@ -198,7 +187,6 @@ export function createVoiceAgent(params: CreateVoiceAgentParams): VoiceAgent {
 
   return {
     agent,
-    transport,
     tts,
     stt,
     

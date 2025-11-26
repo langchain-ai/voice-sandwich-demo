@@ -26,7 +26,6 @@ export {
   createVoiceAgent,
   type CreateVoiceAgentParams,
   type VoiceAgent,
-  type VoiceTransport,
 } from "./agent.js";
 
 // Built-in Middleware
