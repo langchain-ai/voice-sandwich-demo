@@ -1,10 +1,16 @@
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
-import { MemorySaver } from "@langchain/langgraph";
+import { MemorySaver, interrupt } from "@langchain/langgraph";
 import { createAgent, tool } from "langchain";
 import { z } from "zod";
 
 const addToOrder = tool(
   ({ item, quantity }) => {
+    if (item === "ham") {
+      item = interrupt("Sorry, we don't have ham. Please choose another item.");
+      if (!["turkey", "roast beef"].includes(item)) {
+        throw new Error("Sorry, can you please choose either turkey or roast beef?");
+      }
+    }
     return `Added ${quantity} x ${item} to the order.`;
   },
   {

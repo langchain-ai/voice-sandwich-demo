@@ -150,7 +150,15 @@ app.get(
     const pipeline = observableStream
       .pipeThrough(sttTransform)
       .pipeThrough(agentNotifyTransform) // Tap to notify filler transform
-      .pipeThrough(new AgentTransform(agent))
+      .pipeThrough(
+        new AgentTransform(agent, {
+          onInterrupt: (value) => {
+            console.log("[AgentTransform] Human-in-the-loop interrupt:", value);
+            // The interrupt message will be spoken via TTS automatically
+            // since it's emitted as an AIMessageChunk
+          },
+        })
+      )
       .pipeThrough(new AIMessageChunkTransform())
       .pipeThrough(fillerTransform) // Insert filler between AI text and TTS
       .pipeThrough(ttsTransform);
