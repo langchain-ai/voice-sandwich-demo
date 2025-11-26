@@ -80,6 +80,42 @@ app.get(
       }
     }
 
+    // Track if hang up has been requested (wait for audio to complete first)
+    let pendingHangUp: string | null = null;
+
+    // Helper to close the connection (used by hang_up tool)
+    function closeConnection(reason: string) {
+      console.log(`Closing connection: ${reason}`);
+      pipelineClosed = true;
+
+      // Notify client that call is ending
+      if (audioDataChannel && audioDataChannel.readyState === "open") {
+        audioDataChannel.send(JSON.stringify({ type: "call-ended", reason }));
+      }
+
+      // Give client a moment to receive the message before closing
+      setTimeout(() => {
+        if (audioDataChannel) {
+          audioDataChannel.close();
+          audioDataChannel = null;
+        }
+
+        if (peerConnection) {
+          peerConnection.close();
+          peerConnection = null;
+        }
+
+        try {
+          controller.close();
+        } catch {
+          // Ignore if already closed
+        }
+
+        // Close the signaling WebSocket
+        sendSignalingMessage({ type: "connection-closed", reason });
+      }, 500);
+    }
+
     // Create TTS transform separately so we can access interrupt()
     const ttsTransform = new ElevenLabsTTSTransform({
       apiKey: process.env.ELEVENLABS_API_KEY!,
@@ -88,6 +124,14 @@ app.get(
         // Tell client to clear audio buffer
         if (audioDataChannel && audioDataChannel.readyState === "open") {
           audioDataChannel.send(JSON.stringify({ type: "clear-audio" }));
+        }
+      },
+      onAudioComplete: () => {
+        // Check if we have a pending hang up - if so, close the connection now
+        if (pendingHangUp) {
+          console.log(`Audio complete, executing pending hang up: ${pendingHangUp}`);
+          closeConnection(pendingHangUp);
+          pendingHangUp = null;
         }
       },
     });
@@ -156,6 +200,11 @@ app.get(
             console.log("[AgentTransform] Human-in-the-loop interrupt:", value);
             // The interrupt message will be spoken via TTS automatically
             // since it's emitted as an AIMessageChunk
+          },
+          onHangUp: (reason) => {
+            console.log("[AgentTransform] Agent initiated hang up, waiting for audio to complete:", reason);
+            // Don't close immediately - wait for TTS to finish playing the goodbye message
+            pendingHangUp = reason;
           },
         })
       )

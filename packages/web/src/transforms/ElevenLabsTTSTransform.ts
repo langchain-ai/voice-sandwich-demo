@@ -16,6 +16,11 @@ interface ElevenLabsOptions {
    * Callback called when TTS output is interrupted (for barge-in)
    */
   onInterrupt?: () => void;
+  /**
+   * Callback called when audio generation is complete (isFinal received from ElevenLabs).
+   * Useful for knowing when all audio has been sent for a turn.
+   */
+  onAudioComplete?: () => void;
 }
 
 export class ElevenLabsTTSTransform extends TransformStream<string, Buffer> {
@@ -285,6 +290,8 @@ export class ElevenLabsTTSTransform extends TransformStream<string, Buffer> {
                     finalResolve();
                     finalResolve = null;
                   }
+                  // Notify that audio generation is complete
+                  options.onAudioComplete?.();
                 }, 100);
               } else {
                 console.log("ElevenLabs: Ignoring isFinal (no EOS sent yet)");

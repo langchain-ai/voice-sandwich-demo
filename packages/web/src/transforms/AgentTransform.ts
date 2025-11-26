@@ -1,4 +1,4 @@
-import { AIMessageChunk, HumanMessage } from "@langchain/core/messages";
+import { AIMessageChunk, HumanMessage, ToolMessage } from "@langchain/core/messages";
 import { Command } from "@langchain/langgraph";
 import { type ReactAgent } from "langchain";
 
@@ -8,6 +8,11 @@ export interface AgentTransformOptions {
    * interrupt value (usually a message to speak to the user).
    */
   onInterrupt?: (value: unknown) => void;
+  /**
+   * Callback fired when the agent calls the hang_up tool to end the conversation.
+   * This allows the server to close the connection gracefully.
+   */
+  onHangUp?: (reason: string) => void;
 }
 
 interface StateTask {
@@ -75,6 +80,12 @@ export class AgentTransform {
     for await (const [chunk] of graphStream) {
       if (AIMessageChunk.isInstance(chunk)) {
         controller.enqueue(chunk);
+      } else if (ToolMessage.isInstance(chunk)) {
+        if (chunk.name === "hang_up" && this.#options.onHangUp) {
+          console.log("[AgentTransform] Hang up tool called:", chunk.content);
+          // Signal hang up - the TTS onAudioComplete callback will handle the actual close
+          this.#options.onHangUp(chunk.content as string);
+        }
       }
     }
 
