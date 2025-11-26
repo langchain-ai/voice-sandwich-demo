@@ -230,7 +230,7 @@ app.get(
           
           if (audioDataChannel && audioDataChannel.readyState === "open") {
             // Send audio data through WebRTC data channel
-            audioDataChannel.send(value);
+            audioDataChannel.send(value as any);
             audioChunksSent++;
             totalBytesSent += value.length;
             

@@ -115,6 +115,7 @@ export class HumeTTSTransform extends TransformStream<string, Buffer> {
 
               // Resample from Hume's 48kHz to target rate (16kHz)
               if (HUME_SAMPLE_RATE !== outputSampleRate) {
+                // @ts-ignore
                 audioBuffer = resamplePCM(
                   audioBuffer,
                   HUME_SAMPLE_RATE,

@@ -9,6 +9,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint --flag unstable_config_lookup_from_file --cache .",
+    "start:webrtc": "pnpm run --filter=@voice-sandwich-demo/webrtc server",
     "test": "vitest",
     "test:inspect": "node --inspect-brk node_modules/.bin/vitest",
     "typecheck": "pnpm run --recursive --parallel typecheck"
