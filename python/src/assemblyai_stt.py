@@ -249,35 +249,31 @@ async def transcribe_audio_stream(
         yield transcript
 
 
-async def microphone_and_transcribe(input: AsyncIterator[any]) -> AsyncIterator[str]:
+async def microphone_and_transcribe_once(turn_number: int = 1) -> str:
     """
-    Combined microphone + transcription for continuous conversation.
+    Combined microphone + transcription for ONE conversation turn.
 
     Captures audio from microphone and transcribes with AssemblyAI.
-    Stops microphone when AssemblyAI sends a final transcript, then restarts for next turn.
-
-    This function loops continuously, yielding one transcript per conversation turn.
-    Use Ctrl+C to stop.
+    Stops microphone when AssemblyAI sends a final transcript.
 
     Args:
-        input: Unused parameter (for pipeline compatibility)
+        turn_number: Turn number for logging
 
-    Yields:
-        Final transcribed text strings (one per turn)
+    Returns:
+        Final transcribed text string
 
     Example:
         ```python
-        async for transcript in microphone_and_transcribe(None):
-            print(f"User said: {transcript}")
-            # Process transcript with your agent
+        transcript = await microphone_and_transcribe_once()
+        print(f"User said: {transcript}")
         ```
     """
     import asyncio
     import pyaudio
 
-    print("[DEBUG] microphone_and_transcribe: Starting combined mic + transcription")
+    print(f"\n[DEBUG] === Turn {turn_number}: Listening... ===")
 
-    # Initialize microphone once
+    # Initialize microphone for this turn
     p = pyaudio.PyAudio()
     stream = p.open(
         format=pyaudio.paInt16,
@@ -286,71 +282,60 @@ async def microphone_and_transcribe(input: AsyncIterator[any]) -> AsyncIterator[
         input=True,
         frames_per_buffer=1600
     )
-    print("[DEBUG] Microphone opened")
 
     try:
-        # Loop for continuous conversation turns
-        turn_number = 0
-        while True:
-            turn_number += 1
-            print(f"\n[DEBUG] === Turn {turn_number}: Listening... ===")
+        stop_event = asyncio.Event()
 
-            stop_event = asyncio.Event()
+        # Initialize AssemblyAI for this turn
+        stt = AssemblyAISTTTransform(sample_rate=16000)
+        await stt.connect()
 
-            # Initialize AssemblyAI for this turn
-            stt = AssemblyAISTTTransform(sample_rate=16000)
-            await stt.connect()
+        # Background task to capture and send audio
+        async def capture_and_send():
+            chunk_count = 0
+            try:
+                while not stop_event.is_set():
+                    audio_data = await asyncio.get_event_loop().run_in_executor(
+                        None, stream.read, 1600, False
+                    )
+                    await stt.send_audio(audio_data)
+                    chunk_count += 1
+                    if chunk_count % 50 == 0:
+                        print(f"[DEBUG] Captured {chunk_count} audio chunks")
+            except Exception as e:
+                print(f"[DEBUG] Audio capture stopped: {e}")
+            finally:
+                print(f"[DEBUG] Total audio chunks captured: {chunk_count}")
 
-            # Background task to capture and send audio
-            async def capture_and_send():
-                chunk_count = 0
-                try:
-                    while not stop_event.is_set():
-                        audio_data = await asyncio.get_event_loop().run_in_executor(
-                            None, stream.read, 1600, False
-                        )
-                        await stt.send_audio(audio_data)
-                        chunk_count += 1
-                        if chunk_count % 50 == 0:
-                            print(f"[DEBUG] Captured {chunk_count} audio chunks")
-                except Exception as e:
-                    print(f"[DEBUG] Audio capture stopped: {e}")
-                finally:
-                    print(f"[DEBUG] Total audio chunks captured: {chunk_count}")
+        send_task = asyncio.create_task(capture_and_send())
 
-            send_task = asyncio.create_task(capture_and_send())
+        # Listen for final transcript from AssemblyAI
+        transcripts = []
+        async for transcript in stt._receive_messages():
+            print(f"[DEBUG] Received transcript: {transcript}")
+            transcripts.append(transcript)
+            # Stop microphone after first final transcript
+            stop_event.set()
+            break
 
-            # Listen for final transcript from AssemblyAI
-            transcripts = []
-            async for transcript in stt._receive_messages():
-                print(f"[DEBUG] Received transcript: {transcript}")
-                transcripts.append(transcript)
-                # Stop microphone after first final transcript
-                stop_event.set()
-                break
+        # Wait for send task to finish
+        await send_task
 
-            # Wait for send task to finish
-            await send_task
+        # Terminate AssemblyAI session for this turn
+        await stt.terminate()
+        await stt.close()
 
-            # Terminate AssemblyAI session for this turn
-            await stt.terminate()
-            await stt.close()
+        # Return the final transcript
+        if transcripts:
+            final_transcription = " ".join(transcripts)
+            print(f"[DEBUG] Returning final: {final_transcription}")
+            return final_transcription
 
-            # Yield the final transcript
-            if transcripts:
-                final_transcription = " ".join(transcripts)
-                print(f"[DEBUG] Yielding final: {final_transcription}")
-                yield final_transcription
+        return ""
 
-            # Brief pause before next turn
-            await asyncio.sleep(0.1)
-
-    except KeyboardInterrupt:
-        print("\n[DEBUG] Stopping conversation...")
     finally:
         # Clean up microphone
         if stream:
             stream.stop_stream()
             stream.close()
         p.terminate()
-        print("[DEBUG] Microphone closed")
