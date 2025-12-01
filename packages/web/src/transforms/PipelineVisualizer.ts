@@ -125,6 +125,8 @@ export class PipelineVisualizer {
       HumeTTSTransform: "TTS",
       ElevenLabsTTSTransform: "TTS",
       SentenceChunkTransform: "Sentence",
+      ThinkingFillerTransform: "Filler",
+      FillerNotifyPassthrough: "Notify",
     };
 
     for (const [key, value] of Object.entries(nameMap)) {

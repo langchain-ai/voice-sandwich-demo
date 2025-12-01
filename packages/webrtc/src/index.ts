@@ -19,6 +19,8 @@ import {
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 
+import { ThinkingFillerTransform } from "./ThinkingFillerTransform";
+
 const { RTCPeerConnection, RTCSessionDescription } = wrtc;
 
 const app = new Hono();
@@ -90,14 +92,32 @@ app.get(
       },
     });
 
+    // Create thinking filler transform for more natural conversations
+    const fillerTransform = new ThinkingFillerTransform({
+      thresholdMs: 1200, // Emit filler if agent takes longer than 1.2s
+      fillerPhrases: [
+        "Let me see here...",
+        "Hmm, one moment...",
+        "Ah, let me check...",
+        "Just a second...",
+        "Mhm, okay...",
+        "Let me think about that...",
+      ],
+      maxFillersPerTurn: 1,
+      onFillerEmitted: (phrase) => {
+        console.log(`Thinking filler emitted: "${phrase}"`);
+      },
+    });
+
     // Create STT transform with speech detection for barge-in
     const sttTransform = new AssemblyAISTTTransform({
       apiKey: process.env.ASSEMBLYAI_API_KEY!,
       sampleRate: 16000,
       onSpeechStart: () => {
-        // User started speaking - interrupt TTS
+        // User started speaking - interrupt TTS and cancel pending filler
         console.log("Barge-in: User started speaking, interrupting TTS");
         ttsTransform.interrupt();
+        fillerTransform.cancelPendingFiller();
       },
     });
 
@@ -112,10 +132,27 @@ app.get(
       turnIdleThresholdMs: 1000,
     });
 
+    // Named passthrough class to avoid "AnonymousT" in visualizer
+    // This notifies filler transform when agent starts processing
+    class FillerNotifyPassthrough extends TransformStream<string, string> {
+      constructor() {
+        super({
+          transform(text, controller) {
+            console.log("Agent processing started, filler timer activated");
+            fillerTransform.notifyProcessingStarted();
+            controller.enqueue(text);
+          },
+        });
+      }
+    }
+    const agentNotifyTransform = new FillerNotifyPassthrough();
+
     const pipeline = observableStream
       .pipeThrough(sttTransform)
+      .pipeThrough(agentNotifyTransform) // Tap to notify filler transform
       .pipeThrough(new AgentTransform(agent))
       .pipeThrough(new AIMessageChunkTransform())
+      .pipeThrough(fillerTransform) // Insert filler between AI text and TTS
       .pipeThrough(ttsTransform);
 
     const reader = pipeline.getReader();
