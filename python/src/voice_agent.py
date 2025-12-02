@@ -1,12 +1,11 @@
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable
 import asyncio
-from contextlib import suppress
 
 from dotenv import load_dotenv
 from typing_extensions import AsyncIterator
-from langchain_core.runnables import RunnableGenerator
-from langchain_core.messages import AIMessage
+from langchain_core.runnables import RunnableGenerator, Runnable
 from langchain.agents import create_agent
+from langchain.messages import AIMessage
 import pyaudio
 
 from assemblyai_stt import microphone_and_transcribe_once
@@ -15,90 +14,22 @@ from elevenlabs_tts import text_to_speech_stream
 load_dotenv()
 
 
+def get_weather(location: str) -> str:
+    """Get the weather at a location."""
+    return f"The weather in {location} is sunny with a high of 75°F."
+
+
 agent = create_agent(
     model="anthropic:claude-haiku-4-5",
-    tools=[],
+    tools=[get_weather],
+    system_prompt=(
+        "You are a helpful assistant. Target concise responses under 50 words."
+    ),
 )
 
 
-async def _stream_agent(
-    input: AsyncIterator[tuple[AIMessage, Any]]
-) -> AsyncIterator[str]:
-    print("[DEBUG] _stream_agent: Starting agent stream")
-    async for chunk in input:
-        print(f"[DEBUG] _stream_agent: Received chunk: {chunk}")
-        input_message = {"role": "user", "content": chunk}
-        print(f"[DEBUG] _stream_agent: Sending to agent: {input_message}")
-        async for message, _ in agent.astream({"messages": [input_message]}, stream_mode="messages"):
-            print(f"[DEBUG] _stream_agent: Agent response: {message.text}")
-            yield message.text
-
-
-# ElevenLabs TTS - synthesize and play audio
-async def _tts_stream(input: AsyncIterator[str]) -> AsyncIterator[str]:
-    """
-    Convert text to speech using ElevenLabs and play through speakers.
-
-    Args:
-        input: AsyncIterator of text strings from agent
-
-    Yields:
-        Status messages (for pipeline continuity)
-    """
-    print("[DEBUG] _tts_stream: Starting TTS")
-
-    # Initialize audio output
-    p = pyaudio.PyAudio()
-    audio_stream = p.open(
-        format=pyaudio.paInt16,
-        channels=1,
-        rate=16000,
-        output=True,
-        frames_per_buffer=1600
-    )
-    print("[DEBUG] Audio output stream opened")
-
-    try:
-        # Synthesize and play audio
-        async for audio_chunk in text_to_speech_stream(input):
-            # Play audio chunk through speakers
-            await asyncio.get_event_loop().run_in_executor(
-                None, audio_stream.write, audio_chunk
-            )
-
-        print("[DEBUG] _tts_stream: Finished playing audio")
-        yield "tts_complete"
-
-    finally:
-        # Clean up audio
-        audio_stream.stop_stream()
-        audio_stream.close()
-        p.terminate()
-        print("[DEBUG] Audio output closed")
-
-
-async def _run_agent_once(transcript: str) -> str:
-    """Run the LCEL agent for a single user turn and return the response text."""
-    if not transcript.strip():
-        return ""
-
-    print(f"\n[User]: {transcript}")
-    print("[Agent]: ", end="", flush=True)
-
-    agent_response_chunks: list[str] = []
-    input_message = {"role": "user", "content": transcript}
-
-    async for message, _ in agent.astream({"messages": [input_message]}, stream_mode="messages"):
-        if hasattr(message, "text") and message.text:
-            print(message.text, end="", flush=True)
-            agent_response_chunks.append(message.text)
-
-    print()  # newline after response
-    return "".join(agent_response_chunks)
-
-
-async def _play_tts_from_text(text: str, stop_event: Optional[asyncio.Event] = None) -> None:
-    """Stream ElevenLabs audio and stop early if stop_event is set."""
+async def _play_tts_from_text(text: str) -> None:
+    """Stream ElevenLabs audio until completion."""
     stripped = text.strip()
     if not stripped:
         print("[DEBUG] _play_tts_from_text: Empty response, skipping TTS")
@@ -122,108 +53,152 @@ async def _play_tts_from_text(text: str, stop_event: Optional[asyncio.Event] = N
 
     try:
         async for audio_chunk in audio_generator:
-            if stop_event and stop_event.is_set():
-                print("[DEBUG] _play_tts_from_text: Stop requested, ending playback early")
-                break
             await loop.run_in_executor(None, audio_stream.write, audio_chunk)
         print("[DEBUG] _play_tts_from_text: Playback complete")
-    except asyncio.CancelledError:
-        print("[DEBUG] _play_tts_from_text: Cancelled while streaming audio")
-        raise
     finally:
-        with suppress(Exception):
-            await audio_generator.aclose()
         audio_stream.stop_stream()
         audio_stream.close()
         p.terminate()
+
+
+TranscribeFn = Callable[[int], Awaitable[str]]
+TTSFn = Callable[[str], Awaitable[None]]
+
+
+class VoicePipeline:
+    """
+    Demonstrates a plug-and-play LangChain LCEL pipeline:
+    Microphone/STT → Agent → TTS.
+
+    Each step is represented as a RunnableGenerator so alternative STT/TTS
+    implementations can be swapped in without touching orchestration.
+    """
+
+    def __init__(
+        self,
+        agent_runnable: Runnable,
+        transcribe_fn: TranscribeFn = microphone_and_transcribe_once,
+        tts_fn: TTSFn = _play_tts_from_text,
+    ) -> None:
+        self.agent = agent_runnable
+        self.transcribe_fn = transcribe_fn
+        self.tts_fn = tts_fn
+        self.turn_number = 0
+
+        self.audio_stream = (
+            RunnableGenerator(self._transcribe_stream)
+            | RunnableGenerator(self._agent_stream)
+            | RunnableGenerator(self._tts_stream)
+        )
+
+    async def _transcribe_stream(
+        self, sentinel_stream: AsyncIterator[Any]
+    ) -> AsyncIterator[dict[str, Any]]:
+        """
+        Capture a single conversational turn from the microphone/STT layer.
+        """
+        async for _ in sentinel_stream:
+            self.turn_number += 1
+            turn = self.turn_number
+            try:
+                transcript = await self.transcribe_fn(turn)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                print(f"[DEBUG] STT error: {exc}")
+                continue
+
+            if not transcript:
+                print("[DEBUG] _transcribe_stream: Empty transcript, skipping turn")
+                continue
+
+            yield {"turn": turn, "transcript": transcript}
+
+    async def _agent_stream(
+        self, transcript_stream: AsyncIterator[dict[str, Any]]
+    ) -> AsyncIterator[dict[str, Any]]:
+        """
+        Pass transcripts to the LangChain agent and emit full responses.
+        """
+        async for payload in transcript_stream:
+            transcript = payload["transcript"]
+            turn = payload["turn"]
+
+            print(f"\n[User {turn}]: {transcript}")
+            print("[Agent]: ", end="", flush=True)
+
+            agent_response_chunks: list[str] = []
+            input_message = {"role": "user", "content": transcript}
+
+            async for message, _ in self.agent.astream(
+                {"messages": [input_message]},
+                stream_mode="messages",
+            ):
+                if isinstance(message, AIMessage) and message.text:
+                    print(message.text, end="", flush=True)
+                    agent_response_chunks.append(message.text)
+
+            print()
+            response_text = "".join(agent_response_chunks).strip()
+            if not response_text:
+                continue
+
+            yield {"turn": turn, "response_text": response_text}
+
+    async def _tts_stream(
+        self, response_stream: AsyncIterator[dict[str, Any]]
+    ) -> AsyncIterator[dict[str, Any]]:
+        """
+        Convert agent text responses to speech sequentially.
+        """
+        async for payload in response_stream:
+            response_text = payload["response_text"]
+            turn = payload["turn"]
+
+            await self.tts_fn(response_text)
+            yield {"turn": turn, "status": "tts_complete"}
+
+    async def run(self) -> None:
+        """Drive the LCEL pipeline turn by turn."""
+
+        try:
+            while True:
+                async def sentinel_driver() -> AsyncIterator[None]:
+                    yield None
+
+                async for output in self.audio_stream.astream(sentinel_driver()):
+                    print(f"[DEBUG] VoicePipeline.run: pipeline output {output}")
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:  # pragma: no cover - defensive logging
+            print(f"[DEBUG] VoicePipeline.run: pipeline error: {exc}")
+            print(f"[DEBUG] VoicePipeline.run: pipeline output {output}")
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:  # pragma: no cover - defensive logging
+            print(f"[DEBUG] VoicePipeline.run: pipeline error: {exc}")
 
 
 async def main():
     """
     Voice pipeline: Microphone → AssemblyAI STT → Agent → TTS
 
-    Runs microphone capture concurrently with TTS playback so a fresh user turn
-    can interrupt the current audio response as soon as AssemblyAI finalizes it.
+    Each stage is a RunnableGenerator so alternate implementations (web sockets,
+    other vendors, etc.) can be swapped in while keeping the orchestration logic.
+    This refactor focuses on clarity and modularity over overlapping turn
+    handling—the agent response is fully spoken before the next turn begins.
     """
     print("Starting voice pipeline...")
     print("Speak into your microphone. Press Ctrl+C to stop.\n")
 
-    turn_number = 0
-    pending_transcript: Optional[str] = None
-    pending_transcript_task: Optional[asyncio.Task[str]] = None
+    voice_pipeline = VoicePipeline(agent)
 
     try:
-        while True:
-            # Ensure we always have the next transcript ready to process
-            if pending_transcript is None:
-                if pending_transcript_task is None:
-                    turn_number += 1
-                    pending_transcript_task = asyncio.create_task(
-                        microphone_and_transcribe_once(turn_number)
-                    )
-                transcript = await pending_transcript_task
-                pending_transcript_task = None
-            else:
-                transcript = pending_transcript
-                pending_transcript = None
-
-            if not transcript:
-                # No transcript captured, restart listening loop
-                continue
-
-            agent_response = await _run_agent_once(transcript)
-            if not agent_response:
-                continue
-
-            stop_tts_event = asyncio.Event()
-            tts_task = asyncio.create_task(
-                _play_tts_from_text(agent_response, stop_event=stop_tts_event)
-            )
-
-            # Immediately start listening for the next user turn
-            if pending_transcript_task is None:
-                turn_number += 1
-                pending_transcript_task = asyncio.create_task(
-                    microphone_and_transcribe_once(turn_number)
-                )
-
-            # Race: either the user finishes speaking (new transcript) or TTS finishes
-            wait_tasks = {tts_task}
-            if pending_transcript_task:
-                wait_tasks.add(pending_transcript_task)
-
-            done, _ = await asyncio.wait(wait_tasks, return_when=asyncio.FIRST_COMPLETED)
-
-            if pending_transcript_task and pending_transcript_task in done:
-                try:
-                    pending_transcript = pending_transcript_task.result()
-                except Exception as mic_error:  # pragma: no cover - defensive logging
-                    print(f"[DEBUG] main: Microphone task failed: {mic_error}")
-                    pending_transcript = None
-                pending_transcript_task = None
-                stop_tts_event.set()
-                await tts_task
-            else:
-                await tts_task
-                if pending_transcript_task:
-                    try:
-                        pending_transcript = await pending_transcript_task
-                    except Exception as mic_error:  # pragma: no cover
-                        print(f"[DEBUG] main: Microphone task failed: {mic_error}")
-                        pending_transcript = None
-                    pending_transcript_task = None
-
+        await voice_pipeline.run()
     except KeyboardInterrupt:
         print("\n\nStopping pipeline...")
     except Exception as e:
         print(f"[DEBUG] main: Error occurred: {e}")
         import traceback
         traceback.print_exc()
-    finally:
-        if pending_transcript_task:
-            pending_transcript_task.cancel()
-            with suppress(Exception):
-                await pending_transcript_task
 
 
 if __name__ == "__main__":
