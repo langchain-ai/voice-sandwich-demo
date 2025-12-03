@@ -95,6 +95,11 @@ async def _play_tts_from_text(text: str) -> bytes:
     return b"".join(captured_chunks)
 
 
+TTSFn = Callable[[str], Awaitable[bytes]]
+STTFactory = Callable[[], AssemblyAISTTTransform]
+AudioStream = AsyncIterator[bytes]
+
+
 async def microphone_audio_stream(
     chunk_size: int = 1600,
     sample_rate: int = 16000,
@@ -112,23 +117,39 @@ async def microphone_audio_stream(
 
     loop = asyncio.get_event_loop()
 
+    pending_future: asyncio.Future | None = None
+
     try:
         while True:
-            audio_data = await loop.run_in_executor(
+            pending_future = loop.run_in_executor(
                 None, stream.read, chunk_size, False
             )
+            try:
+                audio_data = await pending_future
+            except asyncio.CancelledError:
+                pending_future.cancel()
+                raise
+            pending_future = None
             yield audio_data
-    except asyncio.CancelledError:
-        raise
+    except (asyncio.CancelledError, GeneratorExit):
+        pass
     finally:
+        if pending_future is not None:
+            pending_future.cancel()
         stream.stop_stream()
         stream.close()
         p.terminate()
 
 
-TTSFn = Callable[[str], Awaitable[bytes]]
-STTFactory = Callable[[], AssemblyAISTTTransform]
-AudioStream = AsyncIterator[bytes]
+async def _close_async_generator(gen: AudioStream) -> None:
+    aclose = getattr(gen, "aclose", None)
+    if aclose is not None:
+        with contextlib.suppress(Exception):
+            await aclose()
+
+
+async def _shutdown_audio_stream(gen: AudioStream) -> None:
+    await _close_async_generator(gen)
 
 
 class VoicePipeline:
@@ -207,7 +228,7 @@ class VoicePipeline:
                     current_audio.clear()
 
                 if not turn_audio:
-                    print("[DEBUG] _buffer_node: Empty audio, skipping turn")
+                    print("[DEBUG] buffer: Empty audio, skipping turn")
                     continue
 
                 self.turn_number += 1
@@ -226,6 +247,9 @@ class VoicePipeline:
                     ],
                     response_metadata={"turn": turn, "transcript": transcript},
                 )
+        except asyncio.CancelledError:
+            print("[DEBUG] buffer: cancelled, stopping AssemblyAI stream")
+            return
         finally:
             send_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -319,10 +343,10 @@ class VoicePipeline:
             async for message in self.buffer_runnable.atransform(audio_stream):
                 async for output in self.pipeline.astream(message):
                     last_output = output
-                    print(f"[DEBUG] VoicePipeline.run: pipeline output {output.response_metadata}")
+                    print(
+                        f"[DEBUG] VoicePipeline.run: pipeline output {output.response_metadata}"
+                    )
                     yield output
-        except KeyboardInterrupt:
-            raise
         except Exception as exc:  # pragma: no cover - defensive logging
             print(f"[DEBUG] VoicePipeline.run: pipeline error: {exc}")
             print(f"[DEBUG] VoicePipeline.run: last output {last_output}")
@@ -362,12 +386,10 @@ async def main():
         import traceback
         traceback.print_exc()
     finally:
-        aclose = getattr(audio_stream, "aclose", None)
-        if aclose is not None:
-            with contextlib.suppress(Exception):
-                await aclose()
+        await _shutdown_audio_stream(audio_stream)
 
 
 if __name__ == "__main__":
     import asyncio
+
     asyncio.run(main())
