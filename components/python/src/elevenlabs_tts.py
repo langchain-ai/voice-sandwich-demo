@@ -32,7 +32,7 @@ class ElevenLabsTTSTransform:
         model_id: str = "eleven_multilingual_v2",
         stability: float = 0.5,
         similarity_boost: float = 0.75,
-        output_format: str = "pcm_16000"
+        output_format: str = "pcm_16000",
     ):
         """
         Initialize ElevenLabs TTS transform.
@@ -92,17 +92,14 @@ class ElevenLabsTTSTransform:
         """
         # Skip empty text chunks
         if not text or not text.strip():
-            print(f"[DEBUG] ElevenLabs: Skipping empty text chunk")
+            print("[DEBUG] ElevenLabs: Skipping empty text chunk")
             return
 
         if not self.ws or self.ws.close_code is not None:
             await self.connect()
 
         if self.ws and self.ws.close_code is None:
-            payload = {
-                "text": text,
-                "try_trigger_generation": try_trigger_generation
-            }
+            payload = {"text": text, "try_trigger_generation": try_trigger_generation}
             print(f"[DEBUG] ElevenLabs: Sending text: {repr(text)}")
             await self.ws.send(json.dumps(payload))
         else:
@@ -143,7 +140,8 @@ class ElevenLabsTTSTransform:
                         # Decode base64 audio
                         audio_chunk = base64.b64decode(message["audio"])
                         if audio_chunk:  # Only yield if we have audio data
-                            print(f"[DEBUG] ElevenLabs: Received audio chunk ({len(audio_chunk)} bytes)")
+                            chunk_len = len(audio_chunk)
+                            print(f"[DEBUG] ElevenLabs: chunk ({chunk_len} bytes)")
                             yield audio_chunk
 
                     if message.get("isFinal"):
@@ -152,7 +150,8 @@ class ElevenLabsTTSTransform:
 
                     if "error" in message:
                         print(f"ElevenLabs: Server error: {message}")
-                        print(f"[DEBUG] Full error message: {json.dumps(message, indent=2)}")
+                        err_json = json.dumps(message, indent=2)
+                        print(f"[DEBUG] Full error message: {err_json}")
 
                 except json.JSONDecodeError as e:
                     print(f"ElevenLabs: Error parsing message: {e}")
@@ -163,8 +162,7 @@ class ElevenLabsTTSTransform:
             await self.close()
 
     async def synthesize_stream(
-        self,
-        text_stream: AsyncIterator[str]
+        self, text_stream: AsyncIterator[str]
     ) -> AsyncIterator[bytes]:
         """
         Synthesize a stream of text chunks to audio.
@@ -208,7 +206,7 @@ class ElevenLabsTTSTransform:
 async def text_to_speech_stream(
     text_stream: AsyncIterator[str],
     api_key: Optional[str] = None,
-    voice_id: str = "21m00Tcm4TlvDq8ikWAM"
+    voice_id: str = "21m00Tcm4TlvDq8ikWAM",
 ) -> AsyncIterator[bytes]:
     """
     Helper function to convert text stream to audio using ElevenLabs.
@@ -229,10 +227,7 @@ async def text_to_speech_stream(
                 pass
         ```
     """
-    transform = ElevenLabsTTSTransform(
-        api_key=api_key,
-        voice_id=voice_id
-    )
+    transform = ElevenLabsTTSTransform(api_key=api_key, voice_id=voice_id)
 
     async for audio_chunk in transform.synthesize_stream(text_stream):
         yield audio_chunk

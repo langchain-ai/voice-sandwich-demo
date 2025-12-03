@@ -89,8 +89,9 @@ export class TracedTransformStream<I = any, O = any> extends TransformStream<
             },
             {
               name,
-              run_type: "chain",
+              run_type: runType,
               parent_run: parentRun,
+              metadata,
             }
           );
 

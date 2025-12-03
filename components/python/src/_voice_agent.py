@@ -2,21 +2,22 @@ import asyncio
 import base64
 import contextlib
 import io
-from typing import Any, Awaitable, Callable, Optional
 import wave
+from typing import Any, Awaitable, Callable, Optional
 
+import pyaudio
 from dotenv import load_dotenv
-from typing_extensions import AsyncIterator
-from langchain_core.runnables import RunnableGenerator, Runnable
 from langchain.agents import create_agent
 from langchain.messages import AIMessage, HumanMessage
+from langchain_core.runnables import Runnable, RunnableGenerator
 from langgraph.checkpoint.memory import InMemorySaver
-import pyaudio
+from typing_extensions import AsyncIterator
 
 from assemblyai_stt import AssemblyAISTTTransform
 from elevenlabs_tts import text_to_speech_stream
 
 load_dotenv()
+
 
 def _bytes_to_base64(data: bytes) -> str:
     """Encode bytes to a Base64 string (ASCII)."""
@@ -44,6 +45,7 @@ def _pcm16le_to_wav_bytes(
 def get_weather(location: str) -> str:
     """Get the weather at a location."""
     return f"The weather in {location} is sunny with a high of 75°F."
+
 
 checkpointer = InMemorySaver()
 config = {"configurable": {"thread_id": "1"}}
@@ -121,9 +123,7 @@ async def microphone_audio_stream(
 
     try:
         while True:
-            pending_future = loop.run_in_executor(
-                None, stream.read, chunk_size, False
-            )
+            pending_future = loop.run_in_executor(None, stream.read, chunk_size, False)
             try:
                 audio_data = await pending_future
             except asyncio.CancelledError:
@@ -185,9 +185,7 @@ class VoicePipeline:
         self.pipeline.name = "conversation_turn"
         self.run_runnable = RunnableGenerator(self.voice_run)
 
-    async def buffer(
-        self, audio_stream: AudioStream
-    ) -> AsyncIterator[HumanMessage]:
+    async def buffer(self, audio_stream: AudioStream) -> AsyncIterator[HumanMessage]:
         """
         Buffer microphone audio, stream it to AssemblyAI, and emit turns.
 
@@ -234,7 +232,9 @@ class VoicePipeline:
                 self.turn_number += 1
                 turn = self.turn_number
 
-                wav_bytes = _pcm16le_to_wav_bytes(turn_audio, sample_rate=self.sample_rate)
+                wav_bytes = _pcm16le_to_wav_bytes(
+                    turn_audio, sample_rate=self.sample_rate
+                )
                 wav_base64 = _bytes_to_base64(wav_bytes)
 
                 yield HumanMessage(
@@ -313,9 +313,7 @@ class VoicePipeline:
             turn = payload["turn"]
 
             pcm_bytes = await self.tts_fn(response_text)
-            wav_bytes = _pcm16le_to_wav_bytes(
-                pcm_bytes, sample_rate=self.sample_rate
-            )
+            wav_bytes = _pcm16le_to_wav_bytes(pcm_bytes, sample_rate=self.sample_rate)
             wav_base64 = _bytes_to_base64(wav_bytes)
 
             yield AIMessage(
@@ -332,9 +330,7 @@ class VoicePipeline:
                 },
             )
 
-    async def voice_run(
-        self, audio_stream: AudioStream
-    ) -> AsyncIterator[Any]:
+    async def voice_run(self, audio_stream: AudioStream) -> AsyncIterator[Any]:
         """Async generator that drives the LCEL pipeline turn by turn."""
 
         last_output: Any = None
@@ -343,9 +339,8 @@ class VoicePipeline:
             async for message in self.buffer_runnable.atransform(audio_stream):
                 async for output in self.pipeline.astream(message):
                     last_output = output
-                    print(
-                        f"[DEBUG] VoicePipeline.run: pipeline output {output.response_metadata}"
-                    )
+                    metadata = output.response_metadata
+                    print(f"[DEBUG] VoicePipeline.run: output {metadata}")
                     yield output
         except Exception as exc:  # pragma: no cover - defensive logging
             print(f"[DEBUG] VoicePipeline.run: pipeline error: {exc}")
@@ -384,6 +379,7 @@ async def main():
     except Exception as e:
         print(f"[DEBUG] main: Error occurred: {e}")
         import traceback
+
         traceback.print_exc()
     finally:
         await _shutdown_audio_stream(audio_stream)

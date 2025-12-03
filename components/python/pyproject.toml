@@ -1,0 +1,37 @@
+[project]
+name = "python-voice-agent"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.123.5",
+    "langchain",
+    "langchain-anthropic>=1.2.0",
+    "langchain-core>=1.1.0",
+    "langgraph>=1.0.4",
+    "python-dotenv",
+    "uvicorn>=0.38.0",
+    "websockets",
+]
+
+[project.optional-dependencies]
+assemblyai = ["assemblyai"]
+elevenlabs = ["elevenlabs"]
+anthropic = ["langchain-anthropic"]
+
+[dependency-groups]
+dev = [
+    "dotenv>=0.9.9",
+    "ruff>=0.8.0",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true

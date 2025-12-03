@@ -1,16 +1,16 @@
 import "dotenv/config";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
-import { agent } from "@voice-sandwich-demo/graphs";
 import { readFileSync } from "fs";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { join } from "path";
+import { agent } from "./agent/ordering-agent.js";
 
 import {
   TracedReadableStream,
   TracedTransformStream,
-} from "./TracedReadableStream";
+} from "./TracedReadableStream.js";
 import {
   VADBufferTransform,
   OpenAISTTTransform,
@@ -18,7 +18,7 @@ import {
   AIMessageChunkTransform,
   ElevenLabsTTSTransform,
   OpusToPcmTransform,
-} from "./transforms";
+} from "./transforms/index.js";
 
 const app = new Hono();
 
@@ -27,7 +27,7 @@ const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 app.use("/*", cors());
 
 // Serve static HTML
-const htmlPath = join(process.cwd(), "src/static/index.html");
+const htmlPath = join(process.cwd(), "../web/index.html");
 const html = readFileSync(htmlPath, "utf-8");
 
 app.get("/", (c) => c.html(html));

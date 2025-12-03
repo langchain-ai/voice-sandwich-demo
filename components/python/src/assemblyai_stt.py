@@ -29,7 +29,7 @@ class AssemblyAISTTTransform:
         self,
         api_key: Optional[str] = None,
         sample_rate: int = 16000,
-        format_turns: bool = True
+        format_turns: bool = True,
     ):
         """
         Initialize AssemblyAI STT transform.
@@ -54,22 +54,23 @@ class AssemblyAISTTTransform:
         if self.ws and self.ws.close_code is None:
             return
 
-        params = urlencode({
-            "sample_rate": self.sample_rate,
-            "format_turns": str(self.format_turns).lower(),
-        })
+        params = urlencode(
+            {
+                "sample_rate": self.sample_rate,
+                "format_turns": str(self.format_turns).lower(),
+            }
+        )
 
         url = f"wss://streaming.assemblyai.com/v3/ws?{params}"
         print("AssemblyAI: Connecting to v3 streaming API...")
 
         self.ws = await websockets.connect(
-            url,
-            additional_headers={"Authorization": self.api_key}
+            url, additional_headers={"Authorization": self.api_key}
         )
 
         print("AssemblyAI: WebSocket connected")
 
-    async def _receive_messages(self) -> AsyncIterator[str]:
+    async def receive_messages(self) -> AsyncIterator[str]:
         """
         Receive and process messages from AssemblyAI WebSocket.
 
@@ -165,8 +166,7 @@ class AssemblyAISTTTransform:
         self._connection_ready.clear()
 
     async def transcribe_stream(
-        self,
-        audio_stream: AsyncIterator[bytes]
+        self, audio_stream: AsyncIterator[bytes]
     ) -> AsyncIterator[str]:
         """
         Transcribe a stream of audio chunks.
@@ -183,7 +183,7 @@ class AssemblyAISTTTransform:
 
             # Start receiving messages in background
             receive_task = asyncio.create_task(
-                self._collect_transcripts(self._receive_messages())
+                self._collect_transcripts(self.receive_messages())
             )
 
             # Send audio chunks
@@ -205,9 +205,7 @@ class AssemblyAISTTTransform:
             await self.close()
 
     @staticmethod
-    async def _collect_transcripts(
-        transcript_stream: AsyncIterator[str]
-    ) -> list[str]:
+    async def _collect_transcripts(transcript_stream: AsyncIterator[str]) -> list[str]:
         """Collect all transcripts from the stream into a list."""
         transcripts = []
         async for transcript in transcript_stream:
@@ -218,7 +216,7 @@ class AssemblyAISTTTransform:
 async def transcribe_audio_stream(
     audio_stream: AsyncIterator[bytes],
     api_key: Optional[str] = None,
-    sample_rate: int = 16000
+    sample_rate: int = 16000,
 ) -> AsyncIterator[str]:
     """
     Helper function to transcribe an audio stream using AssemblyAI.
@@ -240,10 +238,7 @@ async def transcribe_audio_stream(
                 print(f"Transcribed: {transcript}")
         ```
     """
-    transform = AssemblyAISTTTransform(
-        api_key=api_key,
-        sample_rate=sample_rate
-    )
+    transform = AssemblyAISTTTransform(api_key=api_key, sample_rate=sample_rate)
 
     async for transcript in transform.transcribe_stream(audio_stream):
         yield transcript
@@ -271,6 +266,7 @@ async def microphone_and_transcribe_once(turn_number: int = 1) -> tuple[str, byt
         ```
     """
     import asyncio
+
     import pyaudio
 
     print(f"\n[DEBUG] === Turn {turn_number}: Listening... ===")
@@ -282,7 +278,7 @@ async def microphone_and_transcribe_once(turn_number: int = 1) -> tuple[str, byt
         channels=1,
         rate=16000,
         input=True,
-        frames_per_buffer=1600
+        frames_per_buffer=1600,
     )
 
     try:
@@ -316,7 +312,7 @@ async def microphone_and_transcribe_once(turn_number: int = 1) -> tuple[str, byt
 
         # Listen for final transcript from AssemblyAI
         transcripts = []
-        async for transcript in stt._receive_messages():
+        async for transcript in stt.receive_messages():
             print(f"[DEBUG] Received transcript: {transcript}")
             transcripts.append(transcript)
             # Stop microphone after first final transcript
