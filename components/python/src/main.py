@@ -6,9 +6,9 @@ from uuid import uuid4
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, WebSocket
+from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from starlette.staticfiles import StaticFiles
 from langchain.agents import create_agent
 from langchain.messages import HumanMessage
 from langchain_core.runnables import RunnableGenerator
@@ -20,6 +20,9 @@ from elevenlabs_tts import ElevenLabsTTS
 load_dotenv()
 
 STATIC_DIR = Path(__file__).parent.parent / "static"
+
+if not STATIC_DIR.exists():
+    raise RuntimeError(f"Static directory not found: {STATIC_DIR}")
 
 app = FastAPI()
 
@@ -117,7 +120,9 @@ async def _stt_stream(audio_stream: AsyncIterator[bytes]) -> AsyncIterator[str]:
         await stt.close()
 
 
-async def _agent_stream(transcript_stream: AsyncIterator[str]) -> AsyncIterator[Optional[str]]:
+async def _agent_stream(
+    transcript_stream: AsyncIterator[str],
+) -> AsyncIterator[Optional[str]]:
     """
     Transform stream: Transcripts (String) → Agent Responses (String)
 
@@ -157,7 +162,9 @@ async def _agent_stream(transcript_stream: AsyncIterator[str]) -> AsyncIterator[
         yield None
 
 
-async def _tts_stream(response_stream: AsyncIterator[Optional[str]]) -> AsyncIterator[bytes]:
+async def _tts_stream(
+    response_stream: AsyncIterator[Optional[str]],
+) -> AsyncIterator[bytes]:
     """
     Transform stream: Agent Response Text (String) → Audio (Bytes)
 
@@ -236,33 +243,6 @@ pipeline = (
 )
 
 
-@app.get("/")
-async def serve_index():
-    return FileResponse(STATIC_DIR / "index.html")
-
-
-@app.get("/{path:path}")
-async def serve_path(path: str):
-    # Reject absolute paths up front
-    user_path = Path(path)
-    if user_path.is_absolute():
-        raise HTTPException(status_code=404, detail="Not found")
-    # Normalize input and resolve against STATIC_DIR
-    file_path = (STATIC_DIR / user_path).resolve()
-    static_root = STATIC_DIR.resolve()
-    try:
-        # Prevent directory traversal: file_path must be within static_root
-        file_path.relative_to(static_root)
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Not found")
-    # Prevent serving symlinks
-    if file_path.is_symlink():
-        raise HTTPException(status_code=404, detail="Not found")
-    if file_path.exists() and file_path.is_file():
-        return FileResponse(file_path)
-    raise HTTPException(status_code=404, detail="Not found")
-
-
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -277,6 +257,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
     async for output_chunk in output_stream:
         await websocket.send_bytes(output_chunk)
+
+
+app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 
 
 if __name__ == "__main__":
