@@ -59,24 +59,38 @@ inputStream
 
 ## Prerequisites
 
+- **ffmpeg** (system installed, required for both implementations)
+
+### TypeScript Implementation
 - **Node.js** (v18+)
 - **pnpm** (or npm)
-- **ffmpeg** (system installed or via `ffmpeg-static`)
 - **API Keys**:
-  - `OPENAI_API_KEY`: For Whisper STT.
-  - `ELEVENLABS_API_KEY` & `ELEVENLABS_VOICE_ID`: For Text-to-Speech.
-  - `GOOGLE_API_KEY`: For the Gemini model driving the LangGraph agent.
+  - `OPENAI_API_KEY`: For Whisper STT
+  - `ELEVENLABS_API_KEY` & `ELEVENLABS_VOICE_ID`: For Text-to-Speech
+  - `GOOGLE_API_KEY`: For the Gemini model driving the LangGraph agent
+
+### Python Implementation
+- **Python** (3.11+)
+- **uv** (Python package manager)
+- **API Keys**:
+  - `ANTHROPIC_API_KEY`: For Claude model driving the LangGraph agent
+  - `ASSEMBLYAI_API_KEY`: For Speech-to-Text
+  - `ELEVENLABS_API_KEY` & `ELEVENLABS_VOICE_ID`: For Text-to-Speech
 
 ## Setup & Running
 
+You can run either the TypeScript or Python implementation. Both serve the same web interface.
+
+### Option 1: TypeScript Implementation
+
 1.  **Install Dependencies**:
     ```bash
-    pnpm install
-    pnpm approve-builds
+    cd components/typescript
+    npm install
     ```
 
 2.  **Environment Configuration**:
-    Create `packages/web/.env`:
+    Create `components/typescript/.env`:
     ```env
     OPENAI_API_KEY=sk-...
     ELEVENLABS_API_KEY=...
@@ -84,14 +98,46 @@ inputStream
     GOOGLE_API_KEY=...
     ```
 
-3.  **Build**:
+3.  **Start Server**:
     ```bash
-    pnpm -r build
-    ```
-
-4.  **Start Server**:
-    ```bash
-    cd packages/web
-    pnpm tsx src/index.ts
+    npm run server
     ```
     The app will be available at `http://localhost:3000`
+
+### Option 2: Python Implementation
+
+1.  **Install Dependencies**:
+    ```bash
+    cd components/python
+    uv sync --dev
+    ```
+
+2.  **Environment Configuration**:
+    Create `components/python/.env`:
+    ```env
+    ANTHROPIC_API_KEY=...
+    ASSEMBLYAI_API_KEY=...
+    ELEVENLABS_API_KEY=...
+    ELEVENLABS_VOICE_ID=...
+    ```
+
+3.  **Start Server**:
+    ```bash
+    uv run src/main.py
+    ```
+    The app will be available at `http://localhost:8000`
+
+### Using Make (Both Implementations)
+
+Alternatively, you can use the provided Makefile:
+
+```bash
+# Install both implementations
+make bootstrap
+
+# Run TypeScript server
+make start-ts
+
+# Run Python server
+make start-py
+```

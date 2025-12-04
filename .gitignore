@@ -5,11 +5,15 @@
 *.sublime-workspace
 .settings
 
-# Installed libs
+# (ts) Installed libs
 node_modules
 dist
 dist-ssr
 *.local
+
+# (py) Installed libs
+__pycache__
+venv
 
 # Misc
 npm-debug.log
