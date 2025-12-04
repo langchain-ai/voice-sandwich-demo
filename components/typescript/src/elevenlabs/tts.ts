@@ -5,16 +5,7 @@ import type {
   ElevenLabsBOSMessage,
   ElevenLabsTextMessage,
 } from "./api-types";
-
-/**
- * ElevenLabs Text-to-Speech Streaming
- *
- * TypeScript implementation of ElevenLabs streaming TTS API.
- * Converts text to PCM audio in real-time using WebSocket streaming.
- *
- * Input: Text strings
- * Output: PCM audio bytes (16-bit, mono, 16kHz)
- */
+import type { VoiceAgentEvent } from "../types";
 
 interface ElevenLabsTTSOptions {
   apiKey?: string;
@@ -35,7 +26,7 @@ export class ElevenLabsTTS {
   outputFormat: string;
   triggerGeneration: boolean;
 
-  protected _bufferIterator = writableIterator<Uint8Array>();
+  protected _bufferIterator = writableIterator<VoiceAgentEvent.TTSChunk>();
   protected _connectionPromise: Promise<WebSocket> | null = null;
   protected get _connection(): Promise<WebSocket> {
     if (this._connectionPromise) {
@@ -70,7 +61,7 @@ export class ElevenLabsTTS {
           if (message.audio) {
             const audioChunk = Buffer.from(message.audio, "base64");
             if (audioChunk.length > 0) {
-              this._bufferIterator.push(new Uint8Array(audioChunk));
+              this._bufferIterator.push({ type: "tts_chunk", audio: new Uint8Array(audioChunk), ts: Date.now() });
             }
           } else if (message.isFinal) {
             // no-op
@@ -126,7 +117,7 @@ export class ElevenLabsTTS {
     }
   }
 
-  async *receiveAudio(): AsyncGenerator<Uint8Array> {
+  async *receiveEvents(): AsyncGenerator<VoiceAgentEvent.TTSChunk> {
     yield* this._bufferIterator;
   }
 

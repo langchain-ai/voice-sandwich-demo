@@ -1,6 +1,7 @@
 import WebSocket from "ws";
 import { writableIterator } from "../utils";
 import type { AssemblyAISTTMessage } from "./api-types";
+import type { VoiceAgentEvent } from "../types";
 
 interface AssemblyAISTTOptions {
   apiKey?: string;
@@ -13,7 +14,7 @@ export class AssemblyAISTT {
   sampleRate: number;
   formatTurns: boolean;
 
-  protected _bufferIterator = writableIterator<string>();
+  protected _bufferIterator = writableIterator<VoiceAgentEvent.STTEvent>();
   protected _connectionPromise: Promise<WebSocket> | null = null;
   protected get _connection(): Promise<WebSocket> {
     if (this._connectionPromise) {
@@ -42,11 +43,11 @@ export class AssemblyAISTT {
             // no-op
           } else if (message.type === "Turn") {
             if (message.turn_is_formatted) {
-              if (message.transcript && message.transcript.trim()) {
-                this._bufferIterator.push(message.transcript);
+              if (message.transcript) {
+                this._bufferIterator.push({ type: "stt_output", transcript: message.transcript, ts: Date.now() });
               }
             } else {
-              // partial result
+              this._bufferIterator.push({ type: "stt_chunk", transcript: message.transcript, ts: Date.now() });
             }
           } else if (message.type === "Termination") {
             // no-op
@@ -87,7 +88,7 @@ export class AssemblyAISTT {
     conn.send(buffer);
   }
 
-  async *receiveMessages(): AsyncGenerator<string> {
+  async *receiveEvents(): AsyncGenerator<VoiceAgentEvent.STTEvent> {
     yield* this._bufferIterator;
   }
 
