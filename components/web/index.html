@@ -64,15 +64,81 @@
         const logDiv = document.getElementById('log');
         
         let ws;
-        let mediaRecorder;
         let audioContext;
+        let workletNode;
+        let mediaStream;
         let nextStartTime = 0;
+
+        const TARGET_SAMPLE_RATE = 16000;
 
         function log(msg) {
             const p = document.createElement('div');
             p.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
             logDiv.appendChild(p);
             logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        // AudioWorkletProcessor code as a string (will be loaded via Blob URL)
+        const workletCode = `
+            class PCMProcessor extends AudioWorkletProcessor {
+                constructor() {
+                    super();
+                    this.buffer = [];
+                    this.targetSampleRate = 16000;
+                    // sampleRate is the AudioContext's sample rate (usually 48000)
+                    this.resampleRatio = sampleRate / this.targetSampleRate;
+                    this.resampleBuffer = [];
+                    this.resampleIndex = 0;
+                }
+
+                process(inputs) {
+                    const input = inputs[0];
+                    if (!input || !input[0]) return true;
+
+                    const channelData = input[0]; // Mono or first channel
+
+                    // Downsample from native rate to 16kHz
+                    for (let i = 0; i < channelData.length; i++) {
+                        this.resampleIndex += 1;
+                        if (this.resampleIndex >= this.resampleRatio) {
+                            this.resampleIndex -= this.resampleRatio;
+                            
+                            // Convert Float32 [-1, 1] to Int16 [-32768, 32767]
+                            let sample = channelData[i];
+                            sample = Math.max(-1, Math.min(1, sample));
+                            const int16 = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+                            this.buffer.push(int16);
+                        }
+                    }
+
+                    // Send chunks of ~100ms worth of audio (1600 samples at 16kHz)
+                    const CHUNK_SIZE = 1600;
+                    while (this.buffer.length >= CHUNK_SIZE) {
+                        const chunk = this.buffer.splice(0, CHUNK_SIZE);
+                        const int16Array = new Int16Array(chunk);
+                        this.port.postMessage(int16Array.buffer, [int16Array.buffer]);
+                    }
+
+                    return true;
+                }
+            }
+
+            registerProcessor('pcm-processor', PCMProcessor);
+        `;
+
+        async function setupAudioWorklet() {
+            // Create AudioContext
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            
+            // Create Blob URL for the worklet
+            const blob = new Blob([workletCode], { type: 'application/javascript' });
+            const workletUrl = URL.createObjectURL(blob);
+            
+            // Load the worklet module
+            await audioContext.audioWorklet.addModule(workletUrl);
+            URL.revokeObjectURL(workletUrl);
+            
+            log(`AudioContext sample rate: ${audioContext.sampleRate}Hz`);
         }
 
         startBtn.onclick = async () => {
@@ -89,19 +155,43 @@
                 stopBtn.disabled = false;
 
                 try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    // Setup AudioWorklet if not already done
+                    if (!audioContext) {
+                        await setupAudioWorklet();
+                    }
+                    
+                    if (audioContext.state === 'suspended') {
+                        await audioContext.resume();
+                    }
+
+                    // Get microphone stream
+                    mediaStream = await navigator.mediaDevices.getUserMedia({ 
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true,
+                        }
+                    });
                     log('Microphone access granted');
                     
-                    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+                    // Create source from microphone
+                    const source = audioContext.createMediaStreamSource(mediaStream);
                     
-                    mediaRecorder.ondataavailable = (event) => {
-                        if (event.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+                    // Create worklet node
+                    workletNode = new AudioWorkletNode(audioContext, 'pcm-processor');
+                    
+                    // Handle PCM data from worklet
+                    workletNode.port.onmessage = (event) => {
+                        if (ws && ws.readyState === WebSocket.OPEN) {
                             ws.send(event.data);
                         }
                     };
-
-                    mediaRecorder.start(250); // Send chunks every 250ms
-                    log('Recording started');
+                    
+                    // Connect: microphone -> worklet
+                    source.connect(workletNode);
+                    // Don't connect to destination (we don't want to hear ourselves)
+                    
+                    log('Streaming PCM audio (16kHz, 16-bit, mono)');
                 } catch (err) {
                     console.error(err);
                     log('Error accessing microphone: ' + err.message);
@@ -111,11 +201,8 @@
             };
 
             ws.onmessage = async (event) => {
-                log('Received message: ' + event.data);
                 // We expect audio buffers from the server (PCM 16000Hz 16-bit Mono)
                 if (event.data instanceof ArrayBuffer) {
-                    // log(`Received audio chunk (${event.data.byteLength} bytes)`);
-                    
                     if (!audioContext) {
                         audioContext = new (window.AudioContext || window.webkitAudioContext)();
                     }
@@ -149,7 +236,6 @@
 
                         const now = audioContext.currentTime;
                         // Add a small jitter buffer (50ms) if we are starting fresh or fell behind
-                        // This helps prevent "clicks" between chunks if they arrive with slight variance
                         const bufferingDelay = 0.05; 
                         
                         let startTime = nextStartTime;
@@ -182,13 +268,19 @@
 
         stopBtn.onclick = () => {
             log('Stopping recording...');
-            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-                mediaRecorder.stop();
-                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+            
+            // Disconnect worklet
+            if (workletNode) {
+                workletNode.disconnect();
+                workletNode = null;
+            }
+            
+            // Stop media stream tracks
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
             }
 
-            // Do NOT close WS here immediately if we want to receive the response.
-            // But currently the server closes WS after sending response.
             resetUI();
         };
 
@@ -196,7 +288,7 @@
             startBtn.disabled = false;
             stopBtn.disabled = true;
             // We do NOT reset nextStartTime here because audio might still be queued playing!
-            // We do NOT close audioContext because that kills pending audio.
+            // We do NOT close audioContext because that kills pending audio and worklet.
         }
     </script>
 </body>

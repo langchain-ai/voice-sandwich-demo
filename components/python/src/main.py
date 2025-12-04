@@ -14,8 +14,8 @@ from langchain.messages import HumanMessage
 from langchain_core.runnables import RunnableGenerator
 from langgraph.checkpoint.memory import InMemorySaver
 
-from assemblyai_stt import AssemblyAISTTTransform
-from elevenlabs_tts import ElevenLabsTTSTransform
+from assemblyai_stt import AssemblyAISTT
+from elevenlabs_tts import ElevenLabsTTS
 
 load_dotenv()
 
@@ -44,7 +44,8 @@ def confirm_order(order_summary: str) -> str:
 
 system_prompt = """
 You are a helpful sandwich shop assistant. Your goal is to take the user's order.
-Be concise and friendly.
+Be concise and friendly. Do NOT use emojis, special characters, or markdown.
+Your responses will be read by a text-to-speech engine.
 
 Available toppings: lettuce, tomato, onion, pickles, mayo, mustard.
 Available meats: turkey, ham, roast beef.
@@ -75,10 +76,7 @@ async def _stt_stream(audio_stream: AsyncIterator[bytes]) -> AsyncIterator[str]:
     Yields:
         Transcribed text strings from AssemblyAI (final transcripts only)
     """
-    stt = AssemblyAISTTTransform(sample_rate=16000)
-
-    # Establish WebSocket connection to AssemblyAI's real-time API
-    await stt.connect()
+    stt = AssemblyAISTT(sample_rate=16000)
 
     async def send_audio():
         """
@@ -94,7 +92,7 @@ async def _stt_stream(audio_stream: AsyncIterator[bytes]) -> AsyncIterator[str]:
                 await stt.send_audio(audio_chunk)
         finally:
             # Signal to AssemblyAI that audio streaming is complete
-            await stt.terminate()
+            await stt.close()
 
     # Launch the audio sending task in the background
     # This allows us to simultaneously receive transcripts in the main coroutine
@@ -152,7 +150,7 @@ async def _agent_stream(transcript_stream: AsyncIterator[str]) -> AsyncIterator[
         async for message, _ in stream:
             # Extract and yield the text content from each message chunk
             # This allows downstream stages to process the response incrementally
-            yield message.content
+            yield message.text
 
 
 async def _tts_stream(response_stream: AsyncIterator[str]) -> AsyncIterator[bytes]:
@@ -173,10 +171,7 @@ async def _tts_stream(response_stream: AsyncIterator[str]) -> AsyncIterator[byte
     Yields:
         PCM audio bytes (16-bit, mono, 16kHz) as they are received from ElevenLabs
     """
-    tts = ElevenLabsTTSTransform()
-
-    # Establish WebSocket connection to ElevenLabs' streaming API
-    await tts.connect()
+    tts = ElevenLabsTTS()
 
     async def send_text():
         """
@@ -194,7 +189,7 @@ async def _tts_stream(response_stream: AsyncIterator[str]) -> AsyncIterator[byte
                 await tts.send_text(text)
         finally:
             # Signal to ElevenLabs that text sending is complete
-            await tts.flush()
+            await tts.close()
 
     # Start the text sending task in the background
     # This allows us to simultaneously send text and receive audio
