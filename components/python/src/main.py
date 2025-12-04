@@ -243,7 +243,12 @@ async def serve_index():
 
 @app.get("/{path:path}")
 async def serve_path(path: str):
-    file_path = (STATIC_DIR / path).resolve()
+    # Reject absolute paths up front
+    user_path = Path(path)
+    if user_path.is_absolute():
+        raise HTTPException(status_code=404, detail="Not found")
+    # Normalize input and resolve against STATIC_DIR
+    file_path = (STATIC_DIR / user_path).resolve()
     static_root = STATIC_DIR.resolve()
     try:
         # Prevent directory traversal: file_path must be within static_root
