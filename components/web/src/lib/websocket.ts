@@ -34,7 +34,6 @@ export function createVoiceSession(): VoiceSession {
             waterfallData.set({ ...prevTurn });
           }
           currentTurn.startTurn(event.ts);
-          audioPlayback.resetScheduling();
         }
         currentTurn.sttStart(event.ts);
         currentTurn.sttChunk(event.transcript);
@@ -70,6 +69,7 @@ export function createVoiceSession(): VoiceSession {
           activities.add("agent", "Agent Response", currentTurnState.response);
         }
         currentTurn.ttsChunk(event.ts);
+        audioPlayback.push(event.audio);
 
         // Debounce: finish turn after TTS stops
         if (ttsFinishTimeout) clearTimeout(ttsFinishTimeout);
@@ -131,16 +131,8 @@ export function createVoiceSession(): VoiceSession {
     };
 
     ws.onmessage = async (event) => {
-      if (event.data instanceof ArrayBuffer) {
-        await audioPlayback.play(event.data);
-      } else {
-        try {
-          const eventData = JSON.parse(event.data) as ServerEvent;
-          handleEvent(eventData);
-        } catch {
-          logs.log(`Received: ${event.data}`);
-        }
-      }
+      const eventData: ServerEvent = JSON.parse(event.data);
+      handleEvent(eventData);
     };
 
     ws.onclose = () => {
