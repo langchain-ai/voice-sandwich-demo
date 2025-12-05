@@ -1,21 +1,23 @@
 import asyncio
 import contextlib
 from pathlib import Path
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator
 from uuid import uuid4
 
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.staticfiles import StaticFiles
 from langchain.agents import create_agent
 from langchain.messages import HumanMessage
 from langchain_core.runnables import RunnableGenerator
 from langgraph.checkpoint.memory import InMemorySaver
+from starlette.staticfiles import StaticFiles
 
 from assemblyai_stt import AssemblyAISTT
 from elevenlabs_tts import ElevenLabsTTS
+from events import AgentChunkEvent, VoiceAgentEvent
+from utils import merge_async_iters
 
 load_dotenv()
 
@@ -63,21 +65,27 @@ agent = create_agent(
 )
 
 
-async def _stt_stream(audio_stream: AsyncIterator[bytes]) -> AsyncIterator[str]:
+async def _stt_stream(
+    audio_stream: AsyncIterator[bytes],
+) -> AsyncIterator[VoiceAgentEvent]:
     """
-    Transform stream: Audio (Bytes) → Transcript (String)
+    Transform stream: Audio (Bytes) → Voice Events (VoiceAgentEvent)
 
-    This function takes a stream of audio chunks and sends them to AssemblyAIfor STT.
+    This function takes a stream of audio chunks and sends them to AssemblyAI for STT.
 
     It uses a producer-consumer pattern where:
-    - Producer: Reads audio chunks from audio_stream and sends them to AssemblyAI
-    - Consumer: Receives transcription results from AssemblyAI and yields them
+    - Producer: A background task reads audio chunks from audio_stream and sends
+      them to AssemblyAI via WebSocket. This runs concurrently with the consumer,
+      allowing transcription to begin before all audio has arrived.
+    - Consumer: The main coroutine receives transcription events from AssemblyAI
+      and yields them downstream. Events include both partial results (stt_chunk)
+      and final transcripts (stt_output).
 
     Args:
         audio_stream: Async iterator of PCM audio bytes (16-bit, mono, 16kHz)
 
     Yields:
-        Transcribed text strings from AssemblyAI (final transcripts only)
+        STT events (stt_chunk for partials, stt_output for final transcripts)
     """
     stt = AssemblyAISTT(sample_rate=16000)
 
@@ -85,9 +93,10 @@ async def _stt_stream(audio_stream: AsyncIterator[bytes]) -> AsyncIterator[str]:
         """
         Background task that pumps audio chunks to AssemblyAI.
 
-        This runs concurrently with the main function that receives transcripts.
-        It establishes the WebSocket connection, streams all audio chunks,
-        and signals completion when the input stream ends.
+        This runs concurrently with the main coroutine, continuously reading
+        audio chunks from the input stream and forwarding them to AssemblyAI.
+        When the input stream ends, it signals completion by closing the
+        WebSocket connection.
         """
         try:
             # Stream each audio chunk to AssemblyAI as it arrives
@@ -102,144 +111,131 @@ async def _stt_stream(audio_stream: AsyncIterator[bytes]) -> AsyncIterator[str]:
     send_task = asyncio.create_task(send_audio())
 
     try:
-        # Consumer loop: receive and yield transcripts as they arrive from AssemblyAI
-        # The receive_messages() method listens on the WebSocket for transcript events
-        async for transcript in stt.receive_messages():
-            if transcript:
-                yield transcript
+        # Consumer loop: receive and yield transcription events as they arrive
+        # from AssemblyAI. The receive_events() method listens on the WebSocket
+        # for transcript events and yields them as they become available.
+        async for event in stt.receive_events():
+            yield event
     finally:
-        # Cleanup: ensure the background sending task is cancelled
-        send_task.cancel()
-
-        # Wait for the send task to finish cancellation gracefully
-        # Suppress CancelledError since we intentionally cancelled it
+        # Cleanup: ensure the background task is cancelled and awaited
         with contextlib.suppress(asyncio.CancelledError):
+            send_task.cancel()
             await send_task
-
-        # Close the WebSocket connection to AssemblyAI
+        # Ensure the WebSocket connection is closed
         await stt.close()
 
 
 async def _agent_stream(
-    transcript_stream: AsyncIterator[str],
-) -> AsyncIterator[Optional[str]]:
+    event_stream: AsyncIterator[VoiceAgentEvent],
+) -> AsyncIterator[VoiceAgentEvent]:
     """
-    Transform stream: Transcripts (String) → Agent Responses (String)
+    Transform stream: Voice Events → Voice Events (with Agent Responses)
 
-    This function takes a stream of transcript strings from the STT stage and
-    passes each one to the LangChain agent. The agent processes the transcript
-    and streams back its response tokens, which are yielded one by one.
+    This function takes a stream of upstream voice agent events and processes them.
+    When an stt_output event arrives, it passes the transcript to the LangChain agent.
+    The agent streams back its response tokens as agent_chunk events.
+    All other upstream events are passed through unchanged.
+
+    The passthrough pattern ensures downstream stages (like TTS) can observe all
+    events in the pipeline, not just the ones this stage produces. This enables
+    features like displaying partial transcripts while the agent is thinking.
 
     Args:
-        transcript_stream: An async iterator of transcript strings from the STT stage
+        event_stream: An async iterator of upstream voice agent events
 
     Yields:
-        String chunks of the agent's response as they are generated, followed by
-        `None` sentinels to mark the end of each agent turn for downstream stages.
+        All upstream events plus agent_chunk events for LLM responses
     """
     # Generate a unique thread ID for this conversation session
     # This allows the agent to maintain conversation context across multiple turns
     # using the checkpointer (InMemorySaver) configured in the agent
     thread_id = str(uuid4())
 
-    # Process each transcript as it arrives from the upstream STT stage
-    async for transcript in transcript_stream:
-        # Stream the agent's response using LangChain's astream method
-        stream = agent.astream(
-            {"messages": [HumanMessage(content=transcript)]},
-            {"configurable": {"thread_id": thread_id}},
-            stream_mode="messages",
-        )
+    # Process each event as it arrives from the upstream STT stage
+    async for event in event_stream:
+        # Pass through all events to downstream consumers
+        yield event
 
-        # Iterate through the agent's streaming response
-        # The stream yields tuples of (message, metadata), but we only need the message
-        async for message, _ in stream:
-            # Extract and yield the text content from each message chunk
-            # This allows downstream stages to process the response incrementally
-            if message.text:
-                yield message.text
-        # Signal to downstream consumers that this agent response is complete
-        yield None
+        # When we receive a final transcript, invoke the agent
+        if event.type == "stt_output":
+            # Stream the agent's response using LangChain's astream method.
+            # stream_mode="messages" yields message chunks as they're generated.
+            stream = agent.astream(
+                {"messages": [HumanMessage(content=event.transcript)]},
+                {"configurable": {"thread_id": thread_id}},
+                stream_mode="messages",
+            )
+
+            # Iterate through the agent's streaming response. The stream yields
+            # tuples of (message, metadata), but we only need the message.
+            async for message, _ in stream:
+                # Extract and yield the text content from each message chunk
+                # This allows downstream stages (TTS) to process incrementally
+                if message.text:
+                    yield AgentChunkEvent.create(message.text)
 
 
 async def _tts_stream(
-    response_stream: AsyncIterator[Optional[str]],
-) -> AsyncIterator[bytes]:
+    event_stream: AsyncIterator[VoiceAgentEvent],
+) -> AsyncIterator[VoiceAgentEvent]:
     """
-    Transform stream: Agent Response Text (String) → Audio (Bytes)
+    Transform stream: Voice Events → Voice Events (with Audio)
 
-    This function takes a stream of text strings from the agent and converts them
-    to PCM audio bytes using ElevenLabs' streaming TTS API. It manages the concurrent
-    operations of sending text to ElevenLabs and receiving audio back.
+    This function takes a stream of upstream voice agent events and processes them.
+    When agent_chunk events arrive, it sends the text to ElevenLabs for TTS synthesis.
+    Audio is streamed back as tts_chunk events as it's generated.
+    All upstream events are passed through unchanged.
 
-    The uses a producer-consumer pattern where:
-    - Producer: Reads text chunks from response_stream and sends them to ElevenLabs
-    - Consumer: Receives audio chunks from ElevenLabs and yields them downstream
+    It uses merge_async_iters to combine two concurrent streams:
+    - process_upstream(): Iterates through incoming events, yields them for
+      passthrough, and sends agent text chunks to ElevenLabs for synthesis.
+    - tts.receive_events(): Yields audio chunks from ElevenLabs as they are
+      synthesized.
+
+    The merge utility runs both iterators concurrently, yielding items from
+    either stream as they become available. This allows audio generation to
+    begin before the agent has finished generating all text, minimizing latency.
 
     Args:
-        response_stream: An async iterator of optional text strings from the agent stage
-            (includes None sentinels to indicate turn boundaries)
+        event_stream: An async iterator of upstream voice agent events
 
     Yields:
-        PCM audio bytes (16-bit, mono, 16kHz) as they are received from ElevenLabs
+        All upstream events plus tts_chunk events for synthesized audio
     """
     tts = ElevenLabsTTS()
 
-    async def send_text():
+    async def process_upstream() -> AsyncIterator[VoiceAgentEvent]:
         """
-        Background task that reads text from response_stream and sends it to ElevenLabs.
+        Process upstream events, yielding them while sending text to ElevenLabs.
 
-        This runs concurrently with the main function, continuously reading text
-        chunks from the agent's response stream and forwarding them to ElevenLabs
-        for synthesis. This allows audio generation to begin before the agent has
-        finished generating all text.
+        This async generator serves two purposes:
+        1. Pass through all upstream events (stt_chunk, stt_output, agent_chunk)
+           so downstream consumers can observe the full event stream.
+        2. When agent_chunk events arrive, send the text to ElevenLabs for
+           immediate synthesis. ElevenLabs will begin generating audio as soon
+           as it receives text, enabling streaming TTS.
         """
-        current_turn_active = False
-
-        try:
-            async for text in response_stream:
-                if text is None:
-                    if current_turn_active:
-                        await tts.finish_input()
-                        current_turn_active = False
-                    continue
-
-                # Send each text chunk to ElevenLabs for immediate synthesis
-                # ElevenLabs will begin generating audio as soon as it receives text
-                current_turn_active = True
-                await tts.send_text(text)
-        finally:
-            # If we're shutting down mid-turn, make sure ElevenLabs finishes cleanly
-            if current_turn_active:
-                await tts.finish_input()
-
-    # Start the text sending task in the background
-    # This allows us to simultaneously send text and receive audio
-    send_task = asyncio.create_task(send_text())
+        async for event in event_stream:
+            # Pass through all events to downstream consumers
+            yield event
+            # Send agent text to ElevenLabs for TTS synthesis
+            if event.type == "agent_chunk":
+                await tts.send_text(event.text)
 
     try:
-        # Consumer loop: Receive audio chunks from ElevenLabs and yield them
-        # This runs concurrently with send_text(), allowing audio to be streamed
-        # to the client as it's generated, rather than waiting for all text first
-        async for audio_chunk in tts.receive_audio():
-            yield audio_chunk
+        # Merge the processed upstream events with TTS audio events
+        # Both streams run concurrently, yielding events as they arrive
+        async for event in merge_async_iters(process_upstream(), tts.receive_events()):
+            yield event
     finally:
-        # Cleanup: Ensure resources are properly released regardless of how we exit
-        send_task.cancel()
-
-        # Wait for the send task to finish cancellation gracefully
-        # Suppress CancelledError since we intentionally cancelled it
-        with contextlib.suppress(asyncio.CancelledError):
-            await send_task
-
-        # Close the WebSocket connection to ElevenLabs
+        # Cleanup: close the WebSocket connection to ElevenLabs
         await tts.close()
 
 
 pipeline = (
-    RunnableGenerator(_stt_stream)  # Audio -> Transcripts
-    | RunnableGenerator(_agent_stream)  # Transcripts -> Agent Responses
-    | RunnableGenerator(_tts_stream)  # Agent Responses -> Audio
+    RunnableGenerator(_stt_stream)  # Audio -> STT events
+    | RunnableGenerator(_agent_stream)  # STT events -> STT + Agent events
+    | RunnableGenerator(_tts_stream)  # STT + Agent events -> All events
 )
 
 
@@ -255,8 +251,10 @@ async def websocket_endpoint(websocket: WebSocket):
 
     output_stream = pipeline.atransform(websocket_audio_stream())
 
-    async for output_chunk in output_stream:
-        await websocket.send_bytes(output_chunk)
+    # Process all events from the pipeline, sending TTS audio back to the client
+    async for event in output_stream:
+        if event.type == "tts_chunk":
+            await websocket.send_bytes(event.audio)
 
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

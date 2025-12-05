@@ -5,7 +5,7 @@ Python implementation of ElevenLabs streaming TTS API.
 Converts text to PCM audio in real-time using WebSocket streaming.
 
 Input: Text strings
-Output: PCM audio bytes (16-bit, mono, 16kHz)
+Output: TTS events (tts_chunk for audio chunks)
 """
 
 import asyncio
@@ -17,6 +17,8 @@ from typing import AsyncIterator, Optional
 
 import websockets
 from websockets.client import WebSocketClientProtocol
+
+from events import TTSChunkEvent
 
 
 class ElevenLabsTTS:
@@ -73,7 +75,7 @@ class ElevenLabsTTS:
         except websockets.exceptions.ConnectionClosed:
             pass
 
-    async def receive_audio(self) -> AsyncIterator[bytes]:
+    async def receive_events(self) -> AsyncIterator[TTSChunkEvent]:
         while not self._close_signal.is_set():
             _, pending = await asyncio.wait(
                 [
@@ -99,7 +101,7 @@ class ElevenLabsTTS:
                             if "audio" in message and message["audio"] is not None:
                                 audio_chunk = base64.b64decode(message["audio"])
                                 if audio_chunk:
-                                    yield audio_chunk
+                                    yield TTSChunkEvent.create(audio_chunk)
                             if message.get("isFinal"):
                                 print("[DEBUG] ElevenLabs: Turn complete (isFinal)")
                                 break

@@ -17,6 +17,7 @@ import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
 import { ElevenLabsTTS } from "./elevenlabs";
 import { AssemblyAISTT } from "./assemblyai/index";
+import type { VoiceAgentEvent } from "./types";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -73,28 +74,29 @@ const agent = createAgent({
 });
 
 /**
- * Transform stream: Audio (Uint8Array) → Transcript (String)
+ * Transform stream: Audio (Uint8Array) → Voice Events (VoiceAgentEvent)
  *
  * This function takes a stream of audio chunks and sends them to AssemblyAI for STT.
  *
  * It uses a producer-consumer pattern where:
  * - Producer: Reads audio chunks from audioStream and sends them to AssemblyAI
- * - Consumer: Receives transcription results from AssemblyAI and yields them
+ * - Consumer: Receives transcription events from AssemblyAI and yields them
  *
  * @param audioStream - Async iterator of PCM audio bytes (16-bit, mono, 16kHz)
- * @returns Async generator yielding transcribed text strings from AssemblyAI
+ * @returns Async generator yielding STT events (stt_chunk for partials, stt_output for final transcripts)
  */
 async function* sttStream(
   audioStream: AsyncIterable<Uint8Array>
-): AsyncGenerator<string> {
+): AsyncGenerator<VoiceAgentEvent> {
   const stt = new AssemblyAISTT({ sampleRate: 16000 });
+  const passthrough = writableIterator<VoiceAgentEvent>();
 
   /**
    * Promise that pumps audio chunks to AssemblyAI.
    *
-   * This runs concurrently with the main function that receives transcripts.
-   * It establishes the WebSocket connection, streams all audio chunks,
-   * and signals completion when the input stream ends.
+   * This runs concurrently with the consumer, continuously reading audio
+   * chunks from the input stream and forwarding them to AssemblyAI.
+   * This allows transcription to begin before all audio has arrived.
    */
   const producer = iife(async () => {
     try {
@@ -108,86 +110,100 @@ async function* sttStream(
     }
   });
 
+  /**
+   * Promise that receives transcription events from AssemblyAI.
+   *
+   * This runs concurrently with the producer, listening for STT events
+   * and pushing them into the passthrough iterator for downstream stages.
+   */
+  const consumer = iife(async () => {
+    for await (const event of stt.receiveEvents()) {
+      passthrough.push(event);
+    }
+  });
+
   try {
-    // Consumer loop: receive and yield transcripts as they arrive from AssemblyAI
-    yield* stt.receiveMessages();
+    // Yield events as they arrive from the consumer
+    yield* passthrough;
   } finally {
-    await producer;
+    // Wait for the producer and consumer to complete when cleaning up
+    await Promise.all([producer, consumer]);
   }
 }
 
 /**
- * Transform stream: Transcripts (String) → Agent Responses (String)
+ * Transform stream: Voice Events → Voice Events (with Agent Responses)
  *
- * This function takes a stream of transcript strings from the STT stage and
- * passes each one to the LangChain agent. The agent processes the transcript
- * and streams back its response tokens, which are yielded one by one.
+ * This function takes a stream of upstream voice agent events and processes them.
+ * When an stt_output event arrives, it passes the transcript to the LangChain agent.
+ * The agent streams back its response tokens as agent_chunk events.
+ * All other upstream events are passed through unchanged.
  *
- * @param transcriptStream - An async iterator of transcript strings from the STT stage
- * @returns Async generator yielding string chunks of the agent's response as they are generated
+ * @param eventStream - An async iterator of upstream voice agent events
+ * @returns Async generator yielding all upstream events plus agent_chunk events for LLM responses
  */
 async function* agentStream(
-  transcriptStream: AsyncIterable<string>
-): AsyncGenerator<string> {
+  eventStream: AsyncIterable<VoiceAgentEvent>
+): AsyncGenerator<VoiceAgentEvent> {
   // Generate a unique thread ID for this conversation session
   // This allows the agent to maintain conversation context across multiple turns
   // using the checkpointer (MemorySaver) configured in the agent
   const threadId = uuidv4();
 
-  // Process each transcript as it arrives from the upstream STT stage
-  for await (const transcript of transcriptStream) {
-    // Stream the agent's response using LangChain's stream method
-    const stream = await agent.stream(
-      { messages: [new HumanMessage(transcript)] },
-      {
-        configurable: { thread_id: threadId },
-        streamMode: "messages",
-      }
-    );
+  for await (const event of eventStream) {
+    yield event;
+    if (event.type === "stt_output") {
+      const stream = await agent.stream(
+        { messages: [new HumanMessage(event.transcript)] },
+        {
+          configurable: { thread_id: threadId },
+          streamMode: "messages",
+        }
+      );
 
-    // Iterate through the agent's streaming response
-    // The stream yields tuples of (message, metadata), but we only need the message
-    for await (const [message] of stream) {
-      // Extract and yield the text content from each message chunk
-      // This allows downstream stages to process the response incrementally
-      yield message.text;
+      for await (const [message] of stream) {
+        yield { type: "agent_chunk", text: message.text, ts: Date.now() };
+      }
     }
   }
 }
 
 /**
- * Transform stream: Agent Response Text (String) → Audio (Uint8Array)
+ * Transform stream: Voice Events → Voice Events (with Audio)
  *
- * This function takes a stream of text strings from the agent and converts them
- * to PCM audio bytes using ElevenLabs' streaming TTS API. It manages the concurrent
- * operations of sending text to ElevenLabs and receiving audio back.
+ * This function takes a stream of upstream voice agent events and processes them.
+ * When agent_chunk events arrive, it sends the text to ElevenLabs for TTS synthesis.
+ * Audio is streamed back as tts_chunk events as it's generated.
+ * All upstream events are passed through unchanged.
  *
  * It uses a producer-consumer pattern where:
- * - Producer: Reads text chunks from responseStream and sends them to ElevenLabs
- * - Consumer: Receives audio chunks from ElevenLabs and yields them downstream
+ * - Producer: Reads events from eventStream, passes them through, and sends agent text to ElevenLabs
+ * - Consumer: Receives audio chunks from ElevenLabs and yields them as tts_chunk events
  *
- * @param responseStream - An async iterator of text strings from the agent stage
- * @returns Async generator yielding PCM audio bytes (16-bit, mono, 16kHz) as they are received from ElevenLabs
+ * @param eventStream - An async iterator of upstream voice agent events
+ * @returns Async generator yielding all upstream events plus tts_chunk events for synthesized audio
  */
 async function* ttsStream(
-  responseStream: AsyncIterable<string>
-): AsyncGenerator<Uint8Array> {
+  eventStream: AsyncIterable<VoiceAgentEvent>
+): AsyncGenerator<VoiceAgentEvent> {
   const tts = new ElevenLabsTTS();
+  const passthrough = writableIterator<VoiceAgentEvent>();
 
   /**
-   * Promise that reads text from responseStream and sends it to ElevenLabs.
+   * Promise that reads events from the upstream stream and sends text to ElevenLabs.
    *
-   * This runs concurrently with the main function, continuously reading text
-   * chunks from the agent's response stream and forwarding them to ElevenLabs
-   * for synthesis. This allows audio generation to begin before the agent has
-   * finished generating all text.
+   * This runs concurrently with the consumer, continuously reading events
+   * from the upstream stream and forwarding agent text to ElevenLabs for synthesis.
+   * All events are passed through to the downstream via the passthrough iterator.
+   * This allows audio generation to begin before the agent has finished generating.
    */
   const producer = iife(async () => {
     try {
-      for await (const text of responseStream) {
-        // Send each text chunk to ElevenLabs for immediate synthesis
-        // ElevenLabs will begin generating audio as soon as it receives text
-        await tts.sendText(text);
+      for await (const event of eventStream) {
+        passthrough.push(event);
+        if (event.type === "agent_chunk") {
+          await tts.sendText(event.text);
+        }
       }
     } finally {
       // Signal to ElevenLabs that text sending is complete
@@ -195,13 +211,24 @@ async function* ttsStream(
     }
   });
 
+  /**
+   * Promise that receives audio events from ElevenLabs.
+   *
+   * This runs concurrently with the producer, listening for TTS audio chunks
+   * and pushing them into the passthrough iterator for downstream stages.
+   */
+  const consumer = iife(async () => {
+    for await (const event of tts.receiveEvents()) {
+      passthrough.push(event);
+    }
+  });
+
   try {
-    // Consumer loop: Receive audio chunks from ElevenLabs and yield them
-    // This runs concurrently with producer, allowing audio to be streamed
-    // to the client as it's generated, rather than waiting for all text first
-    yield* tts.receiveAudio();
+    // Yield events as they arrive from both producer (upstream) and consumer (TTS)
+    yield* passthrough;
   } finally {
-    await producer;
+    // Wait for the producer and consumer to complete when cleaning up
+    await Promise.all([producer, consumer]);
   }
 }
 
@@ -216,18 +243,18 @@ app.get(
     const inputStream = writableIterator<Uint8Array>();
 
     // Define the voice processing pipeline as a chain of async generators
-    // Audio -> Transcripts
-    const transcriptStream = sttStream(inputStream);
-    // Transcripts -> Agent Responses
-    const agentResponseStream = agentStream(transcriptStream);
-    // Agent Responses -> Audio
-    const agentAudioStream = ttsStream(agentResponseStream);
+    // Audio -> STT events
+    const transcriptEventStream = sttStream(inputStream);
+    // STT events -> STT Events + Agent events
+    const agentEventStream = agentStream(transcriptEventStream);
+    // STT events + Agent events -> STT Events + Agent Events + TTS events
+    const outputEventStream = ttsStream(agentEventStream);
 
     const flushPromise = iife(async () => {
-      // Stream the final audio output back to the WebSocket client
-      for await (const output of agentAudioStream) {
-        if (currentSocket?.readyState === 1) {
-          currentSocket.send(output as Uint8Array<ArrayBuffer>);
+      // Process all events from the pipeline, sending TTS audio back to the client
+      for await (const event of outputEventStream) {
+        if (event.type === "tts_chunk") {
+          currentSocket?.send(event.audio as Uint8Array<ArrayBuffer>);
         }
       }
     });
