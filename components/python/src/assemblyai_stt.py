@@ -5,7 +5,7 @@ Python implementation that mirrors the TypeScript AssemblyAISTTTransform.
 Connects to AssemblyAI's v3 WebSocket API for streaming speech-to-text.
 
 Input: PCM 16-bit audio buffer (bytes)
-Output: Transcribed text string (final/formatted transcripts only)
+Output: STT events (stt_chunk for partials, stt_output for final transcripts)
 """
 
 import asyncio
@@ -17,6 +17,8 @@ from urllib.parse import urlencode
 
 import websockets
 from websockets.client import WebSocketClientProtocol
+
+from events import STTChunkEvent, STTEvent, STTOutputEvent
 
 
 class AssemblyAISTT:
@@ -36,7 +38,7 @@ class AssemblyAISTT:
         self._connection_signal = asyncio.Event()
         self._close_signal = asyncio.Event()
 
-    async def receive_messages(self) -> AsyncIterator[str]:
+    async def receive_events(self) -> AsyncIterator[STTEvent]:
         while not self._close_signal.is_set():
             _, pending = await asyncio.wait(
                 [
@@ -70,25 +72,14 @@ class AssemblyAISTT:
                                 )
 
                                 if turn_is_formatted:
-                                    if transcript and transcript.strip():
-                                        print(f'AssemblyAISTT [final]: "{transcript}"')
-                                        yield transcript
-                                else:
                                     if transcript:
-                                        print(
-                                            f'AssemblyAISTT [partial]: "{transcript}"'
-                                        )
+                                        yield STTOutputEvent.create(transcript)
+                                else:
+                                    yield STTChunkEvent.create(transcript)
 
                             elif message_type == "Termination":
-                                audio_duration = message.get("audio_duration_seconds")
-                                session_duration = message.get(
-                                    "session_duration_seconds"
-                                )
-                                print(
-                                    f"AssemblyAISTT: Session terminated "
-                                    f"(audio: {audio_duration}s, session: {session_duration}s)"
-                                )
-                                break
+                                # no-op
+                                pass
                             else:
                                 if "error" in message:
                                     print(f"AssemblyAISTT error: {message['error']}")
