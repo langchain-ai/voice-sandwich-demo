@@ -28,6 +28,7 @@ export class ElevenLabsTTS {
 
   protected _bufferIterator = writableIterator<VoiceAgentEvent.TTSChunk>();
   protected _connectionPromise: Promise<WebSocket> | null = null;
+
   protected get _connection(): Promise<WebSocket> {
     if (this._connectionPromise) {
       return this._connectionPromise;
@@ -59,16 +60,11 @@ export class ElevenLabsTTS {
           const message: ElevenLabsTTSMessage = JSON.parse(data.toString());
 
           if (message.audio) {
-            const audioChunk = Buffer.from(message.audio, "base64");
-            if (audioChunk.length > 0) {
-              this._bufferIterator.push({
-                type: "tts_chunk",
-                audio: new Uint8Array(audioChunk),
-                ts: Date.now(),
-              });
-            }
-          } else if (message.isFinal) {
-            // no-op
+            this._bufferIterator.push({
+              type: "tts_chunk",
+              audio: message.audio,
+              ts: Date.now(),
+            });
           } else if (message.error) {
             throw new Error(
               `ElevenLabs error: ${JSON.stringify(message.error)}`
@@ -94,12 +90,12 @@ export class ElevenLabsTTS {
   }
 
   constructor(options: ElevenLabsTTSOptions = {}) {
-    this.apiKey = options.apiKey || process.env.ELEVENLABS_API_KEY || "";
+    this.apiKey = options.apiKey ?? process.env.ELEVENLABS_API_KEY ?? "";
     if (!this.apiKey) {
       throw new Error("ElevenLabs API key is required");
     }
-    this.voiceId = options.voiceId || "21m00Tcm4TlvDq8ikWAM"; // Default: Rachel
-    this.modelId = options.modelId || "eleven_multilingual_v2";
+    this.voiceId = options.voiceId ?? "21m00Tcm4TlvDq8ikWAM"; // Default: Rachel
+    this.modelId = options.modelId ?? "eleven_multilingual_v2";
     this.stability = options.stability ?? 0.5;
     this.similarityBoost = options.similarityBoost ?? 0.75;
     this.outputFormat = options.outputFormat || "pcm_24000";
@@ -116,6 +112,7 @@ export class ElevenLabsTTS {
       const payload: ElevenLabsTextMessage = {
         text: text,
         try_trigger_generation: this.triggerGeneration,
+        flush: true,
       };
       conn.send(JSON.stringify(payload));
     }

@@ -98,6 +98,16 @@ export namespace VoiceAgentEvent {
   }
 
   /**
+   * Event emitted when the agent has finished generating its response for a turn.
+   *
+   * This signals downstream consumers (like TTS) that no more text is coming
+   * for this turn and they should flush any buffered content.
+   */
+  export interface AgentEnd extends BaseEvent {
+    readonly type: "agent_end";
+  }
+
+  /**
    * Event emitted when the agent invokes a tool.
    *
    * This event provides visibility into the agent's decision-making process,
@@ -150,6 +160,15 @@ export namespace VoiceAgentEvent {
   // interface AgentInterrupt extends BaseEvent {}
 
   /**
+   * Union type of all agent-related events.
+   *
+   * This type encompasses all events emitted during agent processing, including
+   * streaming text chunks, tool invocations, and completion signals. It enables
+   * type-safe handling of the various stages of agent response generation.
+   */
+  export type AgentEvent = AgentChunk | AgentEnd | ToolCall | ToolResult;
+
+  /**
    * Event emitted during text-to-speech synthesis for streaming audio chunks.
    *
    * As the TTS service synthesizes speech, it streams audio incrementally.
@@ -161,11 +180,12 @@ export namespace VoiceAgentEvent {
     readonly type: "tts_chunk";
 
     /**
-     * PCM audio bytes synthesized from the agent's text response.
-     * Format: 16-bit signed integer, mono channel, 16kHz sample rate.
-     * Can be played immediately as it arrives for low-latency audio output.
+     * PCM audio bytes encoded as base64 string synthesized from the agent's
+     * text response. Format: 16-bit signed integer, mono channel, 16kHz sample
+     * rate. Can be played immediately as it arrives for low-latency audio
+     * output.
      */
-    audio: Uint8Array;
+    audio: string;
   }
 }
 
@@ -194,9 +214,6 @@ export namespace VoiceAgentEvent {
  */
 export type VoiceAgentEvent =
   | VoiceAgentEvent.UserInput
-  | VoiceAgentEvent.STTChunk
-  | VoiceAgentEvent.STTOutput
-  | VoiceAgentEvent.AgentChunk
-  | VoiceAgentEvent.ToolCall
-  | VoiceAgentEvent.ToolResult
+  | VoiceAgentEvent.STTEvent
+  | VoiceAgentEvent.AgentEvent
   | VoiceAgentEvent.TTSChunk;

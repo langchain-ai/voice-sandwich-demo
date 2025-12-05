@@ -23,7 +23,7 @@ import type { VoiceAgentEvent } from "./types";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const STATIC_DIR = path.join(__dirname, "../../web/dist");
-const PORT = parseInt(process.env.PORT || "8000");
+const PORT = parseInt(process.env.PORT ?? "8000");
 
 if (!existsSync(STATIC_DIR)) {
   console.error(
@@ -177,7 +177,7 @@ async function* agentStream(
           for (const toolCall of message.tool_calls) {
             yield {
               type: "tool_call",
-              id: toolCall.id || uuidv4(),
+              id: toolCall.id ?? uuidv4(),
               name: toolCall.name,
               args: toolCall.args,
               ts: Date.now(),
@@ -187,8 +187,8 @@ async function* agentStream(
         if (ToolMessage.isInstance(message)) {
           yield {
             type: "tool_result",
-            toolCallId: message.tool_call_id || "",
-            name: message.name || "unknown",
+            toolCallId: message.tool_call_id ?? "",
+            name: message.name ?? "unknown",
             result:
               typeof message.content === "string"
                 ? message.content
@@ -197,6 +197,9 @@ async function* agentStream(
           };
         }
       }
+
+      // Signal that the agent has finished responding for this turn
+      yield { type: "agent_end", ts: Date.now() };
     }
   }
 }
@@ -232,10 +235,18 @@ async function* ttsStream(
    */
   const producer = iife(async () => {
     try {
+      let buffer: string[] = [];
       for await (const event of eventStream) {
+        // Pass through all events to downstream consumers
         passthrough.push(event);
+        // Send agent text chunks to ElevenLabs for synthesis
         if (event.type === "agent_chunk") {
-          await tts.sendText(event.text);
+          buffer.push(event.text);
+        }
+        // Send all buffered text to ElevenLabs for synthesis
+        if (event.type === "agent_end") {
+          await tts.sendText(buffer.join(""));
+          buffer = [];
         }
       }
     } finally {
@@ -286,17 +297,7 @@ app.get(
     const flushPromise = iife(async () => {
       // Process all events from the pipeline, sending events back to the client
       for await (const event of outputEventStream) {
-        if (event.type === "tts_chunk") {
-          // Send audio as binary
-          currentSocket?.send(event.audio as Uint8Array<ArrayBuffer>);
-          // Also send a JSON event for the UI (without the audio data to save bandwidth)
-          currentSocket?.send(
-            JSON.stringify({ type: "tts_chunk", ts: event.ts })
-          );
-        } else {
-          // Send all other events as JSON
-          currentSocket?.send(JSON.stringify(event));
-        }
+        currentSocket?.send(JSON.stringify(event));
       }
     });
 

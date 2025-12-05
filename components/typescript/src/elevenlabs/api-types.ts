@@ -49,6 +49,7 @@ export interface ElevenLabsBOSMessage {
 export interface ElevenLabsTextMessage {
   text: string;
   try_trigger_generation?: boolean;
+  flush?: boolean;
   generation_config?: {
     chunk_length_schedule: number[];
   };
