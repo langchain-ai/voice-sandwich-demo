@@ -61,7 +61,11 @@ export class ElevenLabsTTS {
           if (message.audio) {
             const audioChunk = Buffer.from(message.audio, "base64");
             if (audioChunk.length > 0) {
-              this._bufferIterator.push({ type: "tts_chunk", audio: new Uint8Array(audioChunk), ts: Date.now() });
+              this._bufferIterator.push({
+                type: "tts_chunk",
+                audio: new Uint8Array(audioChunk),
+                ts: Date.now(),
+              });
             }
           } else if (message.isFinal) {
             // no-op
@@ -98,7 +102,7 @@ export class ElevenLabsTTS {
     this.modelId = options.modelId || "eleven_multilingual_v2";
     this.stability = options.stability ?? 0.5;
     this.similarityBoost = options.similarityBoost ?? 0.75;
-    this.outputFormat = options.outputFormat || "pcm_16000";
+    this.outputFormat = options.outputFormat || "pcm_24000";
     this.triggerGeneration = options.triggerGeneration ?? false;
   }
 

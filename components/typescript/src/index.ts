@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { fileURLToPath } from "node:url";
-import { createAgent } from "langchain";
+import { existsSync } from "node:fs";
+import { createAgent, AIMessage, ToolMessage } from "langchain";
 import path from "node:path";
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
@@ -21,8 +22,16 @@ import type { VoiceAgentEvent } from "./types";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const STATIC_DIR = path.join(__dirname, "../static");
+const STATIC_DIR = path.join(__dirname, "../../web/dist");
 const PORT = parseInt(process.env.PORT || "8000");
+
+if (!existsSync(STATIC_DIR)) {
+  console.error(
+    `Web build not found at ${STATIC_DIR}.\n` +
+      "Run 'make build-web' or 'make dev-ts' from the project root."
+  );
+  process.exit(1);
+}
 
 const app = new Hono();
 const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
@@ -137,10 +146,11 @@ async function* sttStream(
  * This function takes a stream of upstream voice agent events and processes them.
  * When an stt_output event arrives, it passes the transcript to the LangChain agent.
  * The agent streams back its response tokens as agent_chunk events.
+ * Tool calls and results are also emitted as separate events.
  * All other upstream events are passed through unchanged.
  *
  * @param eventStream - An async iterator of upstream voice agent events
- * @returns Async generator yielding all upstream events plus agent_chunk events for LLM responses
+ * @returns Async generator yielding all upstream events plus agent_chunk, tool_call, and tool_result events
  */
 async function* agentStream(
   eventStream: AsyncIterable<VoiceAgentEvent>
@@ -162,7 +172,30 @@ async function* agentStream(
       );
 
       for await (const [message] of stream) {
-        yield { type: "agent_chunk", text: message.text, ts: Date.now() };
+        if (AIMessage.isInstance(message) && message.tool_calls) {
+          yield { type: "agent_chunk", text: message.text, ts: Date.now() };
+          for (const toolCall of message.tool_calls) {
+            yield {
+              type: "tool_call",
+              id: toolCall.id || uuidv4(),
+              name: toolCall.name,
+              args: toolCall.args,
+              ts: Date.now(),
+            };
+          }
+        }
+        if (ToolMessage.isInstance(message)) {
+          yield {
+            type: "tool_result",
+            toolCallId: message.tool_call_id || "",
+            name: message.name || "unknown",
+            result:
+              typeof message.content === "string"
+                ? message.content
+                : JSON.stringify(message.content),
+            ts: Date.now(),
+          };
+        }
       }
     }
   }
@@ -251,10 +284,18 @@ app.get(
     const outputEventStream = ttsStream(agentEventStream);
 
     const flushPromise = iife(async () => {
-      // Process all events from the pipeline, sending TTS audio back to the client
+      // Process all events from the pipeline, sending events back to the client
       for await (const event of outputEventStream) {
         if (event.type === "tts_chunk") {
+          // Send audio as binary
           currentSocket?.send(event.audio as Uint8Array<ArrayBuffer>);
+          // Also send a JSON event for the UI (without the audio data to save bandwidth)
+          currentSocket?.send(
+            JSON.stringify({ type: "tts_chunk", ts: event.ts })
+          );
+        } else {
+          // Send all other events as JSON
+          currentSocket?.send(JSON.stringify(event));
         }
       }
     });

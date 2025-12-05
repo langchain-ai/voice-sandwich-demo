@@ -97,6 +97,56 @@ export namespace VoiceAgentEvent {
     text: string;
   }
 
+  /**
+   * Event emitted when the agent invokes a tool.
+   *
+   * This event provides visibility into the agent's decision-making process,
+   * showing which tools are being called and with what arguments.
+   */
+  export interface ToolCall extends BaseEvent {
+    readonly type: "tool_call";
+
+    /**
+     * Unique identifier for this tool invocation.
+     */
+    id: string;
+
+    /**
+     * Name of the tool being invoked.
+     */
+    name: string;
+
+    /**
+     * Arguments passed to the tool, serialized as JSON.
+     */
+    args: Record<string, unknown>;
+  }
+
+  /**
+   * Event emitted when a tool completes execution and returns a result.
+   *
+   * This event contains the output from the tool, allowing tracking of
+   * the full tool execution lifecycle.
+   */
+  export interface ToolResult extends BaseEvent {
+    readonly type: "tool_result";
+
+    /**
+     * The tool call ID this result corresponds to.
+     */
+    toolCallId: string;
+
+    /**
+     * Name of the tool that was executed.
+     */
+    name: string;
+
+    /**
+     * The result returned by the tool.
+     */
+    result: string;
+  }
+
   // interface AgentInterrupt extends BaseEvent {}
 
   /**
@@ -147,4 +197,6 @@ export type VoiceAgentEvent =
   | VoiceAgentEvent.STTChunk
   | VoiceAgentEvent.STTOutput
   | VoiceAgentEvent.AgentChunk
+  | VoiceAgentEvent.ToolCall
+  | VoiceAgentEvent.ToolResult
   | VoiceAgentEvent.TTSChunk;

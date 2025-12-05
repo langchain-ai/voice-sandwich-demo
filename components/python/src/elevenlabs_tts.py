@@ -33,7 +33,7 @@ class ElevenLabsTTS:
         model_id: str = "eleven_multilingual_v2",
         stability: float = 0.5,
         similarity_boost: float = 0.75,
-        output_format: str = "pcm_16000",
+        output_format: str = "pcm_24000",
         trigger_generation: bool = False,
     ):
         self.api_key = api_key or os.getenv("ELEVENLABS_API_KEY")

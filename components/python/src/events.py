@@ -133,6 +133,64 @@ class AgentChunkEvent:
 
 
 @dataclass
+class ToolCallEvent:
+    """
+    Event emitted when the agent invokes a tool.
+
+    This event provides visibility into the agent's decision-making process,
+    showing which tools are being called and with what arguments.
+    """
+
+    type: Literal["tool_call"]
+
+    id: str
+    """Unique identifier for this tool invocation."""
+
+    name: str
+    """Name of the tool being invoked."""
+
+    args: dict
+    """Arguments passed to the tool."""
+
+    ts: int
+    """Unix timestamp (milliseconds since epoch) when the event was created."""
+
+    @classmethod
+    def create(cls, id: str, name: str, args: dict) -> "ToolCallEvent":
+        """Factory method to create a ToolCallEvent event with current timestamp."""
+        return cls(type="tool_call", id=id, name=name, args=args, ts=_now_ms())
+
+
+@dataclass
+class ToolResultEvent:
+    """
+    Event emitted when a tool completes execution and returns a result.
+
+    This event contains the output from the tool, allowing tracking of
+    the full tool execution lifecycle.
+    """
+
+    type: Literal["tool_result"]
+
+    tool_call_id: str
+    """The tool call ID this result corresponds to."""
+
+    name: str
+    """Name of the tool that was executed."""
+
+    result: str
+    """The result returned by the tool."""
+
+    ts: int
+    """Unix timestamp (milliseconds since epoch) when the event was created."""
+
+    @classmethod
+    def create(cls, tool_call_id: str, name: str, result: str) -> "ToolResultEvent":
+        """Factory method to create a ToolResultEvent event with current timestamp."""
+        return cls(type="tool_result", tool_call_id=tool_call_id, name=name, result=result, ts=_now_ms())
+
+
+@dataclass
 class TTSChunkEvent:
     """
     Event emitted during text-to-speech synthesis for streaming audio chunks.
@@ -162,5 +220,25 @@ class TTSChunkEvent:
 
 
 VoiceAgentEvent = Union[
-    UserInputEvent, STTChunkEvent, STTOutputEvent, AgentChunkEvent, TTSChunkEvent
+    UserInputEvent, STTChunkEvent, STTOutputEvent, AgentChunkEvent, ToolCallEvent, ToolResultEvent, TTSChunkEvent
 ]
+
+
+def event_to_dict(event: VoiceAgentEvent) -> dict:
+    """Convert a VoiceAgentEvent to a JSON-serializable dictionary."""
+    if isinstance(event, UserInputEvent):
+        return {"type": event.type, "ts": event.ts}
+    elif isinstance(event, STTChunkEvent):
+        return {"type": event.type, "transcript": event.transcript, "ts": event.ts}
+    elif isinstance(event, STTOutputEvent):
+        return {"type": event.type, "transcript": event.transcript, "ts": event.ts}
+    elif isinstance(event, AgentChunkEvent):
+        return {"type": event.type, "text": event.text, "ts": event.ts}
+    elif isinstance(event, ToolCallEvent):
+        return {"type": event.type, "id": event.id, "name": event.name, "args": event.args, "ts": event.ts}
+    elif isinstance(event, ToolResultEvent):
+        return {"type": event.type, "toolCallId": event.tool_call_id, "name": event.name, "result": event.result, "ts": event.ts}
+    elif isinstance(event, TTSChunkEvent):
+        return {"type": event.type, "ts": event.ts}
+    else:
+        raise ValueError(f"Unknown event type: {type(event)}")

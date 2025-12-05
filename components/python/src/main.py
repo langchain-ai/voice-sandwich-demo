@@ -16,15 +16,19 @@ from starlette.staticfiles import StaticFiles
 
 from assemblyai_stt import AssemblyAISTT
 from elevenlabs_tts import ElevenLabsTTS
-from events import AgentChunkEvent, VoiceAgentEvent
+from events import AgentChunkEvent, ToolCallEvent, ToolResultEvent, VoiceAgentEvent, event_to_dict
 from utils import merge_async_iters
 
 load_dotenv()
 
-STATIC_DIR = Path(__file__).parent.parent / "static"
+# Static files are served from the shared web build output
+STATIC_DIR = Path(__file__).parent.parent.parent / "web" / "dist"
 
 if not STATIC_DIR.exists():
-    raise RuntimeError(f"Static directory not found: {STATIC_DIR}")
+    raise RuntimeError(
+        f"Web build not found at {STATIC_DIR}. "
+        "Run 'make build-web' or 'make dev-py' from the project root."
+    )
 
 app = FastAPI()
 
@@ -134,6 +138,7 @@ async def _agent_stream(
     This function takes a stream of upstream voice agent events and processes them.
     When an stt_output event arrives, it passes the transcript to the LangChain agent.
     The agent streams back its response tokens as agent_chunk events.
+    Tool calls and results are also emitted as separate events.
     All other upstream events are passed through unchanged.
 
     The passthrough pattern ensures downstream stages (like TTS) can observe all
@@ -144,7 +149,7 @@ async def _agent_stream(
         event_stream: An async iterator of upstream voice agent events
 
     Yields:
-        All upstream events plus agent_chunk events for LLM responses
+        All upstream events plus agent_chunk, tool_call, and tool_result events
     """
     # Generate a unique thread ID for this conversation session
     # This allows the agent to maintain conversation context across multiple turns
@@ -168,10 +173,27 @@ async def _agent_stream(
 
             # Iterate through the agent's streaming response. The stream yields
             # tuples of (message, metadata), but we only need the message.
-            async for message, _ in stream:
+            async for message, metadata in stream:
+                # Emit tool calls if present
+                if hasattr(message, "tool_calls") and message.tool_calls:
+                    for tool_call in message.tool_calls:
+                        yield ToolCallEvent.create(
+                            id=tool_call.get("id", str(uuid4())),
+                            name=tool_call.get("name", "unknown"),
+                            args=tool_call.get("args", {})
+                        )
+
+                # Emit tool results (tool messages)
+                if message.type == "tool":
+                    yield ToolResultEvent.create(
+                        tool_call_id=getattr(message, "tool_call_id", ""),
+                        name=getattr(message, "name", "unknown"),
+                        result=str(message.content) if message.content else ""
+                    )
+
                 # Extract and yield the text content from each message chunk
                 # This allows downstream stages (TTS) to process incrementally
-                if message.text:
+                if message.text and metadata.get("langgraph_node") == "agent":
                     yield AgentChunkEvent.create(message.text)
 
 
@@ -251,10 +273,16 @@ async def websocket_endpoint(websocket: WebSocket):
 
     output_stream = pipeline.atransform(websocket_audio_stream())
 
-    # Process all events from the pipeline, sending TTS audio back to the client
+    # Process all events from the pipeline, sending events back to the client
     async for event in output_stream:
         if event.type == "tts_chunk":
+            # Send audio as binary
             await websocket.send_bytes(event.audio)
+            # Also send a JSON event for the UI (without the audio data to save bandwidth)
+            await websocket.send_json(event_to_dict(event))
+        else:
+            # Send all other events as JSON
+            await websocket.send_json(event_to_dict(event))
 
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
