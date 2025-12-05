@@ -10,9 +10,10 @@ the voice agent pipeline, from user audio input through STT, agent
 processing, and TTS output.
 """
 
+import base64
+import time
 from dataclasses import dataclass
 from typing import Literal, Union
-import time
 
 
 def _now_ms() -> int:
@@ -133,6 +134,26 @@ class AgentChunkEvent:
 
 
 @dataclass
+class AgentEndEvent:
+    """
+    Event emitted when the agent has finished generating its response for a turn.
+
+    This signals downstream consumers (like TTS) that no more text is coming
+    for this turn and they should flush any buffered content.
+    """
+
+    type: Literal["agent_end"]
+
+    ts: int
+    """Unix timestamp (milliseconds since epoch) when the event was created."""
+
+    @classmethod
+    def create(cls) -> "AgentEndEvent":
+        """Factory method to create an AgentEndEvent event with current timestamp."""
+        return cls(type="agent_end", ts=_now_ms())
+
+
+@dataclass
 class ToolCallEvent:
     """
     Event emitted when the agent invokes a tool.
@@ -187,7 +208,23 @@ class ToolResultEvent:
     @classmethod
     def create(cls, tool_call_id: str, name: str, result: str) -> "ToolResultEvent":
         """Factory method to create a ToolResultEvent event with current timestamp."""
-        return cls(type="tool_result", tool_call_id=tool_call_id, name=name, result=result, ts=_now_ms())
+        return cls(
+            type="tool_result",
+            tool_call_id=tool_call_id,
+            name=name,
+            result=result,
+            ts=_now_ms(),
+        )
+
+
+AgentEvent = Union[AgentChunkEvent, AgentEndEvent, ToolCallEvent, ToolResultEvent]
+"""
+Union type of all agent-related events.
+
+This type encompasses all events emitted during agent processing, including
+streaming text chunks, tool invocations, and completion signals. It enables
+type-safe handling of the various stages of agent response generation.
+"""
 
 
 @dataclass
@@ -206,7 +243,8 @@ class TTSChunkEvent:
     audio: bytes
     """
     PCM audio bytes synthesized from the agent's text response.
-    Format: 16-bit signed integer, mono channel, 16kHz sample rate.
+    Format: 16-bit signed integer, mono channel, 24kHz sample rate.
+    Encoded as base64 when serialized to JSON for transmission.
     Can be played immediately as it arrives for low-latency audio output.
     """
 
@@ -219,9 +257,7 @@ class TTSChunkEvent:
         return cls(type="tts_chunk", audio=audio, ts=_now_ms())
 
 
-VoiceAgentEvent = Union[
-    UserInputEvent, STTChunkEvent, STTOutputEvent, AgentChunkEvent, ToolCallEvent, ToolResultEvent, TTSChunkEvent
-]
+VoiceAgentEvent = Union[UserInputEvent, STTEvent, AgentEvent, TTSChunkEvent]
 
 
 def event_to_dict(event: VoiceAgentEvent) -> dict:
@@ -234,11 +270,29 @@ def event_to_dict(event: VoiceAgentEvent) -> dict:
         return {"type": event.type, "transcript": event.transcript, "ts": event.ts}
     elif isinstance(event, AgentChunkEvent):
         return {"type": event.type, "text": event.text, "ts": event.ts}
-    elif isinstance(event, ToolCallEvent):
-        return {"type": event.type, "id": event.id, "name": event.name, "args": event.args, "ts": event.ts}
-    elif isinstance(event, ToolResultEvent):
-        return {"type": event.type, "toolCallId": event.tool_call_id, "name": event.name, "result": event.result, "ts": event.ts}
-    elif isinstance(event, TTSChunkEvent):
+    elif isinstance(event, AgentEndEvent):
         return {"type": event.type, "ts": event.ts}
+    elif isinstance(event, ToolCallEvent):
+        return {
+            "type": event.type,
+            "id": event.id,
+            "name": event.name,
+            "args": event.args,
+            "ts": event.ts,
+        }
+    elif isinstance(event, ToolResultEvent):
+        return {
+            "type": event.type,
+            "toolCallId": event.tool_call_id,
+            "name": event.name,
+            "result": event.result,
+            "ts": event.ts,
+        }
+    elif isinstance(event, TTSChunkEvent):
+        return {
+            "type": event.type,
+            "audio": base64.b64encode(event.audio).decode("ascii"),
+            "ts": event.ts,
+        }
     else:
         raise ValueError(f"Unknown event type: {type(event)}")

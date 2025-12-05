@@ -16,7 +16,14 @@ from starlette.staticfiles import StaticFiles
 
 from assemblyai_stt import AssemblyAISTT
 from elevenlabs_tts import ElevenLabsTTS
-from events import AgentChunkEvent, ToolCallEvent, ToolResultEvent, VoiceAgentEvent, event_to_dict
+from events import (
+    AgentChunkEvent,
+    AgentEndEvent,
+    ToolCallEvent,
+    ToolResultEvent,
+    VoiceAgentEvent,
+    event_to_dict,
+)
 from utils import merge_async_iters
 
 load_dotenv()
@@ -180,7 +187,7 @@ async def _agent_stream(
                         yield ToolCallEvent.create(
                             id=tool_call.get("id", str(uuid4())),
                             name=tool_call.get("name", "unknown"),
-                            args=tool_call.get("args", {})
+                            args=tool_call.get("args", {}),
                         )
 
                 # Emit tool results (tool messages)
@@ -188,13 +195,16 @@ async def _agent_stream(
                     yield ToolResultEvent.create(
                         tool_call_id=getattr(message, "tool_call_id", ""),
                         name=getattr(message, "name", "unknown"),
-                        result=str(message.content) if message.content else ""
+                        result=str(message.content) if message.content else "",
                     )
 
                 # Extract and yield the text content from each message chunk
                 # This allows downstream stages (TTS) to process incrementally
                 if message.text and metadata.get("langgraph_node") == "agent":
                     yield AgentChunkEvent.create(message.text)
+
+            # Signal that the agent has finished responding for this turn
+            yield AgentEndEvent.create()
 
 
 async def _tts_stream(
@@ -233,16 +243,20 @@ async def _tts_stream(
         This async generator serves two purposes:
         1. Pass through all upstream events (stt_chunk, stt_output, agent_chunk)
            so downstream consumers can observe the full event stream.
-        2. When agent_chunk events arrive, send the text to ElevenLabs for
-           immediate synthesis. ElevenLabs will begin generating audio as soon
-           as it receives text, enabling streaming TTS.
+        2. Buffer agent_chunk text and send to ElevenLabs when agent_end arrives.
+           This ensures the full response is sent at once for better TTS quality.
         """
+        buffer: list[str] = []
         async for event in event_stream:
             # Pass through all events to downstream consumers
             yield event
-            # Send agent text to ElevenLabs for TTS synthesis
+            # Buffer agent text chunks
             if event.type == "agent_chunk":
-                await tts.send_text(event.text)
+                buffer.append(event.text)
+            # Send all buffered text to ElevenLabs when agent finishes
+            if event.type == "agent_end":
+                await tts.send_text("".join(buffer))
+                buffer = []
 
     try:
         # Merge the processed upstream events with TTS audio events
@@ -275,14 +289,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
     # Process all events from the pipeline, sending events back to the client
     async for event in output_stream:
-        if event.type == "tts_chunk":
-            # Send audio as binary
-            await websocket.send_bytes(event.audio)
-            # Also send a JSON event for the UI (without the audio data to save bandwidth)
-            await websocket.send_json(event_to_dict(event))
-        else:
-            # Send all other events as JSON
-            await websocket.send_json(event_to_dict(event))
+        await websocket.send_json(event_to_dict(event))
 
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

@@ -66,14 +66,9 @@ class ElevenLabsTTS:
         payload = {
             "text": text,
             "try_trigger_generation": self.trigger_generation,
+            "flush": True,
         }
         await ws.send(json.dumps(payload))
-
-    async def finish_input(self) -> None:
-        try:
-            await self.send_text("")
-        except websockets.exceptions.ConnectionClosed:
-            pass
 
     async def receive_events(self) -> AsyncIterator[TTSChunkEvent]:
         while not self._close_signal.is_set():
