@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from langchain.agents import create_agent
-from langchain.messages import HumanMessage
+from langchain.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableGenerator
 from langgraph.checkpoint.memory import InMemorySaver
 from starlette.staticfiles import StaticFiles
@@ -181,27 +181,26 @@ async def _agent_stream(
             # Iterate through the agent's streaming response. The stream yields
             # tuples of (message, metadata), but we only need the message.
             async for message, metadata in stream:
-                # Emit tool calls if present
-                if hasattr(message, "tool_calls") and message.tool_calls:
-                    for tool_call in message.tool_calls:
-                        yield ToolCallEvent.create(
-                            id=tool_call.get("id", str(uuid4())),
-                            name=tool_call.get("name", "unknown"),
-                            args=tool_call.get("args", {}),
-                        )
+                # Emit agent chunks (AI messages)
+                if isinstance(message, AIMessage):
+                    # Extract and yield the text content from each message chunk
+                    yield AgentChunkEvent.create(message.text)
+                    # Emit tool calls if present
+                    if hasattr(message, "tool_calls") and message.tool_calls:
+                        for tool_call in message.tool_calls:
+                            yield ToolCallEvent.create(
+                                id=tool_call.get("id", str(uuid4())),
+                                name=tool_call.get("name", "unknown"),
+                                args=tool_call.get("args", {}),
+                            )
 
                 # Emit tool results (tool messages)
-                if message.type == "tool":
+                if isinstance(message, ToolMessage):
                     yield ToolResultEvent.create(
                         tool_call_id=getattr(message, "tool_call_id", ""),
                         name=getattr(message, "name", "unknown"),
                         result=str(message.content) if message.content else "",
                     )
-
-                # Extract and yield the text content from each message chunk
-                # This allows downstream stages (TTS) to process incrementally
-                if message.text and metadata.get("langgraph_node") == "agent":
-                    yield AgentChunkEvent.create(message.text)
 
             # Signal that the agent has finished responding for this turn
             yield AgentEndEvent.create()
