@@ -16,7 +16,7 @@ import { HumanMessage } from "@langchain/core/messages";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
-import { ElevenLabsTTS } from "./elevenlabs";
+import { CARTESIA_TTS_SYSTEM_PROMPT, CartesiaTTS } from "./cartesia";
 import { AssemblyAISTT } from "./assemblyai/index";
 import type { VoiceAgentEvent } from "./types";
 
@@ -67,12 +67,13 @@ const confirmOrder = tool(
 
 const systemPrompt = `
 You are a helpful sandwich shop assistant. Your goal is to take the user's order.
-Be concise and friendly. Do NOT use emojis, special characters, or markdown.
-Your responses will be read by a text-to-speech engine.
+Be concise and friendly.
 
 Available toppings: lettuce, tomato, onion, pickles, mayo, mustard.
 Available meats: turkey, ham, roast beef.
 Available cheeses: swiss, cheddar, provolone.
+
+${CARTESIA_TTS_SYSTEM_PROMPT}
 `;
 
 const agent = createAgent({
@@ -222,14 +223,16 @@ async function* agentStream(
 async function* ttsStream(
   eventStream: AsyncIterable<VoiceAgentEvent>
 ): AsyncGenerator<VoiceAgentEvent> {
-  const tts = new ElevenLabsTTS();
+  const tts = new CartesiaTTS({
+    voiceId: "f6ff7c0c-e396-40a9-a70b-f7607edb6937",
+  });
   const passthrough = writableIterator<VoiceAgentEvent>();
 
   /**
-   * Promise that reads events from the upstream stream and sends text to ElevenLabs.
+   * Promise that reads events from the upstream stream and sends text to Cartesia.
    *
    * This runs concurrently with the consumer, continuously reading events
-   * from the upstream stream and forwarding agent text to ElevenLabs for synthesis.
+   * from the upstream stream and forwarding agent text to Cartesia for synthesis.
    * All events are passed through to the downstream via the passthrough iterator.
    * This allows audio generation to begin before the agent has finished generating.
    */
@@ -239,24 +242,24 @@ async function* ttsStream(
       for await (const event of eventStream) {
         // Pass through all events to downstream consumers
         passthrough.push(event);
-        // Send agent text chunks to ElevenLabs for synthesis
+        // Send agent text chunks to Cartesia for synthesis
         if (event.type === "agent_chunk") {
           buffer.push(event.text);
         }
-        // Send all buffered text to ElevenLabs for synthesis
+        // Send all buffered text to Cartesia for synthesis
         if (event.type === "agent_end") {
           await tts.sendText(buffer.join(""));
           buffer = [];
         }
       }
     } finally {
-      // Signal to ElevenLabs that text sending is complete
+      // Signal to Cartesia that text sending is complete
       await tts.close();
     }
   });
 
   /**
-   * Promise that receives audio events from ElevenLabs.
+   * Promise that receives audio events from Cartesia.
    *
    * This runs concurrently with the producer, listening for TTS audio chunks
    * and pushing them into the passthrough iterator for downstream stages.

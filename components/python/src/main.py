@@ -15,7 +15,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from starlette.staticfiles import StaticFiles
 
 from assemblyai_stt import AssemblyAISTT
-from elevenlabs_tts import ElevenLabsTTS
+from components.python.src.cartesia_tts import CartesiaTTS
 from events import (
     AgentChunkEvent,
     AgentEndEvent,
@@ -60,12 +60,13 @@ def confirm_order(order_summary: str) -> str:
 
 system_prompt = """
 You are a helpful sandwich shop assistant. Your goal is to take the user's order.
-Be concise and friendly. Do NOT use emojis, special characters, or markdown.
-Your responses will be read by a text-to-speech engine.
+Be concise and friendly.
 
 Available toppings: lettuce, tomato, onion, pickles, mayo, mustard.
 Available meats: turkey, ham, roast beef.
 Available cheeses: swiss, cheddar, provolone.
+
+${CARTESIA_TTS_SYSTEM_PROMPT}
 """
 
 agent = create_agent(
@@ -213,14 +214,14 @@ async def _tts_stream(
     Transform stream: Voice Events → Voice Events (with Audio)
 
     This function takes a stream of upstream voice agent events and processes them.
-    When agent_chunk events arrive, it sends the text to ElevenLabs for TTS synthesis.
+    When agent_chunk events arrive, it sends the text to Cartesia for TTS synthesis.
     Audio is streamed back as tts_chunk events as it's generated.
     All upstream events are passed through unchanged.
 
     It uses merge_async_iters to combine two concurrent streams:
     - process_upstream(): Iterates through incoming events, yields them for
-      passthrough, and sends agent text chunks to ElevenLabs for synthesis.
-    - tts.receive_events(): Yields audio chunks from ElevenLabs as they are
+      passthrough, and sends agent text chunks to Cartesia for synthesis.
+    - tts.receive_events(): Yields audio chunks from Cartesia as they are
       synthesized.
 
     The merge utility runs both iterators concurrently, yielding items from
@@ -233,16 +234,16 @@ async def _tts_stream(
     Yields:
         All upstream events plus tts_chunk events for synthesized audio
     """
-    tts = ElevenLabsTTS()
+    tts = CartesiaTTS()
 
     async def process_upstream() -> AsyncIterator[VoiceAgentEvent]:
         """
-        Process upstream events, yielding them while sending text to ElevenLabs.
+        Process upstream events, yielding them while sending text to Cartesia.
 
         This async generator serves two purposes:
         1. Pass through all upstream events (stt_chunk, stt_output, agent_chunk)
            so downstream consumers can observe the full event stream.
-        2. Buffer agent_chunk text and send to ElevenLabs when agent_end arrives.
+        2. Buffer agent_chunk text and send to Cartesia when agent_end arrives.
            This ensures the full response is sent at once for better TTS quality.
         """
         buffer: list[str] = []
@@ -252,7 +253,7 @@ async def _tts_stream(
             # Buffer agent text chunks
             if event.type == "agent_chunk":
                 buffer.append(event.text)
-            # Send all buffered text to ElevenLabs when agent finishes
+            # Send all buffered text to Cartesia when agent finishes
             if event.type == "agent_end":
                 await tts.send_text("".join(buffer))
                 buffer = []
@@ -263,7 +264,7 @@ async def _tts_stream(
         async for event in merge_async_iters(process_upstream(), tts.receive_events()):
             yield event
     finally:
-        # Cleanup: close the WebSocket connection to ElevenLabs
+        # Cleanup: close the WebSocket connection to Cartesia
         await tts.close()
 
 
