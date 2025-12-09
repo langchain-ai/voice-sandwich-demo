@@ -1,143 +1,127 @@
 # Voice Sandwich Demo 🥪
 
-A demo of a real-time, voice-to-voice AI pipeline orchestrated using the **Web Streams API** on Node.js.
+A real-time, voice-to-voice AI pipeline demo featuring a sandwich shop order assistant. Built with LangChain/LangGraph agents, AssemblyAI for speech-to-text, and Cartesia for text-to-speech.
 
-## Architecture & Data Flow
+## Architecture
 
-This project is architected entirely around standard `ReadableStream`, `WritableStream`, and `TransformStream` interfaces. This approach allows for efficient, backpressure-aware data processing where each step in the pipeline handles a specific transformation of the audio or text signal.
-
-### Pipeline Diagram
+The pipeline processes audio through three transform stages using async generators with a producer-consumer pattern:
 
 ```mermaid
-flowchart TD
-    subgraph Client [Browser Client]
-        Mic[Microphone] -->|Opus/WebM Stream| WS_Out[WebSocket]
-        WS_In[WebSocket] -->|PCM Float32 Stream| Speaker[AudioContext]
+flowchart LR
+    subgraph Client [Browser]
+        Mic[🎤 Microphone] -->|PCM Audio| WS_Out[WebSocket]
+        WS_In[WebSocket] -->|Audio + Events| Speaker[🔊 Speaker]
     end
 
-    subgraph Server [Node.js Hono Server]
-        WS_Receiver[WS Receiver] -->|Buffer Stream| Pipeline
-        
-        subgraph Pipeline [Web Streams Pipeline]
-            direction TB
-            Opus[OpusToPcmTransform] -->|Raw PCM Int16| VAD[VADBufferTransform]
-            VAD -->|Buffered Speech| STT[OpenAISTTTransform]
-            STT -->|Text String| Agent[AgentTransform]
-            Agent -->|AIMessageChunk| Filter[MessageChunkTransform]
-            Filter -->|Text Stream| Chunker[SentenceChunkerTransform]
-            Chunker -->|Sentence String| TTS[ElevenLabsTTSTransform]
+    subgraph Server [Node.js / Python]
+        WS_Receiver[WS Receiver] --> Pipeline
+
+        subgraph Pipeline [Voice Agent Pipeline]
+            direction LR
+            STT[AssemblyAI STT] -->|Transcripts| Agent[LangChain Agent]
+            Agent -->|Text Chunks| TTS[Cartesia TTS]
         end
 
-        TTS -->|PCM Int16 Buffer| WS_Sender[WS Sender]
+        Pipeline -->|Events| WS_Sender[WS Sender]
     end
 
-    WS_Out <--> WS_Receiver
-    WS_Sender <--> WS_In
+    WS_Out --> WS_Receiver
+    WS_Sender --> WS_In
 ```
 
-### The Web Streams Implementation
+### Pipeline Stages
 
-The core logic resides in `packages/web/src/index.ts`, where the pipeline is composed:
+Each stage is an async generator that transforms a stream of events:
 
-```typescript
-inputStream
-  .pipeThrough(new OpusToPcmTransform())       // ffmpeg: WebM -> PCM
-  .pipeThrough(new VADBufferTransform())       // Silero VAD: Gates stream on speech detection
-  .pipeThrough(new OpenAISTTTransform())       // OpenAI Whisper: Audio Buffer -> Text
-  .pipeThrough(new AgentTransform(graph))      // LangGraph: Text -> Streaming AI Tokens
-  .pipeThrough(new AIMessageChunkTransform())  // Formatting: Chunk -> String
-  .pipeThrough(new SentenceChunkTransform())   // Optimization: Buffers tokens into sentences
-  .pipeThrough(new ElevenLabsTTSTransform())   // ElevenLabs: Text -> Streaming Audio
-```
-
-### Key Components
-
-1.  **`OpusToPcmTransform`**: Spawns an `ffmpeg` process to transcode the incoming browser-native WebM/Opus stream into raw PCM (16kHz, 16-bit, Mono) required for VAD and downstream processing.
-2.  **`VADBufferTransform`**: Utilizes `@ericedouard/vad-node-realtime` (running the Silero VAD model via ONNX) to analyze the PCM stream. It acts as a gate, buffering audio frames and only emitting a consolidated buffer when a "speech end" event is triggered.
-3.  **`AgentTransform`**: Wraps a **createAgent** / **LangGraph** runnable. It takes a string input (transcription), runs the agent graph, and streams the resulting `AIMessageChunk` objects.
-4.  **`ElevenLabsTTSTransform`**: Manages a WebSocket connection to ElevenLabs. It sends text sentences as they become available and yields the returned PCM audio buffers.
+1. **STT Stage** (`sttStream`): Streams audio to AssemblyAI, yields transcription events (`stt_chunk`, `stt_output`)
+2. **Agent Stage** (`agentStream`): Passes upstream events through, invokes LangChain agent on final transcripts, yields agent responses (`agent_chunk`, `tool_call`, `tool_result`, `agent_end`)
+3. **TTS Stage** (`ttsStream`): Passes upstream events through, sends agent text to Cartesia, yields audio events (`tts_chunk`)
 
 ## Prerequisites
 
-- **ffmpeg** (system installed, required for both implementations)
+- **Node.js** (v18+) or **Python** (3.11+)
+- **pnpm** or **uv** (Python package manager)
 
-### TypeScript Implementation
-- **Node.js** (v18+)
-- **pnpm** (or npm)
-- **API Keys**:
-  - `OPENAI_API_KEY`: For Whisper STT
-  - `ELEVENLABS_API_KEY` & `ELEVENLABS_VOICE_ID`: For Text-to-Speech
-  - `GOOGLE_API_KEY`: For the Gemini model driving the LangGraph agent
+### API Keys
 
-### Python Implementation
-- **Python** (3.11+)
-- **uv** (Python package manager)
-- **API Keys**:
-  - `ANTHROPIC_API_KEY`: For Claude model driving the LangGraph agent
-  - `ASSEMBLYAI_API_KEY`: For Speech-to-Text
-  - `ELEVENLABS_API_KEY` & `ELEVENLABS_VOICE_ID`: For Text-to-Speech
+| Service | Environment Variable | Purpose |
+|---------|---------------------|---------|
+| AssemblyAI | `ASSEMBLYAI_API_KEY` | Speech-to-Text |
+| Cartesia | `CARTESIA_API_KEY` | Text-to-Speech |
+| Anthropic | `ANTHROPIC_API_KEY` | LangChain Agent (Claude) |
 
-## Setup & Running
+## Quick Start
 
-You can run either the TypeScript or Python implementation. Both serve the same web interface.
-
-### Option 1: TypeScript Implementation
-
-1.  **Install Dependencies**:
-    ```bash
-    cd components/typescript
-    npm install
-    ```
-
-2.  **Environment Configuration**:
-    Create `components/typescript/.env`:
-    ```env
-    OPENAI_API_KEY=sk-...
-    ELEVENLABS_API_KEY=...
-    ELEVENLABS_VOICE_ID=...
-    GOOGLE_API_KEY=...
-    ```
-
-3.  **Start Server**:
-    ```bash
-    npm run server
-    ```
-    The app will be available at `http://localhost:3000`
-
-### Option 2: Python Implementation
-
-1.  **Install Dependencies**:
-    ```bash
-    cd components/python
-    uv sync --dev
-    ```
-
-2.  **Environment Configuration**:
-    Create `components/python/.env`:
-    ```env
-    ANTHROPIC_API_KEY=...
-    ASSEMBLYAI_API_KEY=...
-    ELEVENLABS_API_KEY=...
-    ELEVENLABS_VOICE_ID=...
-    ```
-
-3.  **Start Server**:
-    ```bash
-    uv run src/main.py
-    ```
-    The app will be available at `http://localhost:8000`
-
-### Using Make (Both Implementations)
-
-Alternatively, you can use the provided Makefile:
+### Using Make (Recommended)
 
 ```bash
-# Install both implementations
+# Install all dependencies
 make bootstrap
 
-# Run TypeScript server
-make start-ts
+# Run TypeScript implementation (with hot reload)
+make dev-ts
 
-# Run Python server
-make start-py
+# Or run Python implementation (with hot reload)
+make dev-py
 ```
+
+The app will be available at `http://localhost:8000`
+
+### Manual Setup
+
+#### TypeScript
+
+```bash
+cd components/typescript
+pnpm install
+cd ../web
+pnpm install && pnpm build
+cd ../typescript
+pnpm run server
+```
+
+#### Python
+
+```bash
+cd components/python
+uv sync --dev
+cd ../web
+pnpm install && pnpm build
+cd ../python
+uv run src/main.py
+```
+
+## Project Structure
+
+```
+components/
+├── web/                 # Svelte frontend (shared by both backends)
+│   └── src/
+├── typescript/          # Node.js backend
+│   └── src/
+│       ├── index.ts     # Main server & pipeline
+│       ├── assemblyai/  # AssemblyAI STT client
+│       ├── cartesia/    # Cartesia TTS client
+│       └── elevenlabs/  # Alternate TTS client
+└── python/              # Python backend
+    └── src/
+        ├── main.py             # Main server & pipeline
+        ├── assemblyai_stt.py
+        ├── cartesia_tts.py
+        ├── elevenlabs_tts.py   # Alternate TTS client
+        └── events.py           # Event type definitions
+```
+
+## Event Types
+
+The pipeline communicates via a unified event stream:
+
+| Event | Direction | Description |
+|-------|-----------|-------------|
+| `stt_chunk` | STT → Client | Partial transcription (real-time feedback) |
+| `stt_output` | STT → Agent | Final transcription |
+| `agent_chunk` | Agent → TTS | Text chunk from agent response |
+| `tool_call` | Agent → Client | Tool invocation |
+| `tool_result` | Agent → Client | Tool execution result |
+| `agent_end` | Agent → TTS | Signals end of agent turn |
+| `tts_chunk` | TTS → Client | Audio chunk for playback |
