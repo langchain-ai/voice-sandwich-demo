@@ -20,6 +20,7 @@ export function createVoiceSession(): VoiceSession {
   const STOP_TAIL_CAPTURE_MS = 3000;
   let mediaStream: MediaStream | null = null;
   let mediaRecorder: MediaRecorder | null = null;
+  let isStopping = false;
   let currentRecordingChunks: BlobPart[] = [];
   let lastRecordingUrl: string | null = null;
   let lastRecordingAudio: HTMLAudioElement | null = null;
@@ -109,17 +110,27 @@ export function createVoiceSession(): VoiceSession {
   }
 
   async function stop(): Promise<void> {
-    if (!mediaRecorder || !mediaStream || mediaRecorder.state !== "recording") {
+    if (
+      isStopping ||
+      !mediaRecorder ||
+      !mediaStream ||
+      mediaRecorder.state !== "recording"
+    ) {
       return;
     }
 
-    logs.log("Stop requested. Capturing tail audio...");
-    session.setRecording(false);
-    session.setStatus("processing");
+    isStopping = true;
+    logs.log(`Stop requested. Capturing ${STOP_TAIL_CAPTURE_MS / 1000}s tail audio...`);
 
     await new Promise<void>((resolve) => {
       window.setTimeout(resolve, STOP_TAIL_CAPTURE_MS);
     });
+
+    // Flush pending encoder buffer before we stop, so tail audio is not dropped.
+    mediaRecorder.requestData();
+    session.setRecording(false);
+    session.setStatus("processing");
+    logs.log("Tail capture window ended. Finalizing recording...");
 
     const stopPromise = new Promise<void>((resolve) => {
       mediaRecorder!.addEventListener("stop", () => resolve(), { once: true });
@@ -137,6 +148,7 @@ export function createVoiceSession(): VoiceSession {
     if (!recordingBlob.size) {
       logs.log("No audio captured");
       session.reset();
+      isStopping = false;
       return;
     }
 
@@ -168,10 +180,12 @@ export function createVoiceSession(): VoiceSession {
       logs.log("Transcription received");
       finishTurn();
       session.reset();
+      isStopping = false;
     } catch (error) {
       console.error(error);
       logs.log("Failed to transcribe recording");
       session.setStatus("error");
+      isStopping = false;
     }
   }
 

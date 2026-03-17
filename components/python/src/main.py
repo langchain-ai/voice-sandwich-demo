@@ -40,7 +40,7 @@ app.add_middleware(
 @app.post("/api/transcribe")
 async def transcribe_audio(
     audio: UploadFile = File(...),
-    language: str = Form("en"),
+    language: str = Form(""),
 ) -> dict:
     """Transcribe one uploaded audio clip with OpenAI Speech-to-Text."""
     suffix = Path(audio.filename or "recording.webm").suffix or ".webm"
