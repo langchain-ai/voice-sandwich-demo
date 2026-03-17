@@ -16,7 +16,13 @@ export type ServerEvent =
 export interface SessionState {
   connected: boolean;
   recording: boolean;
-  status: "ready" | "connecting" | "listening" | "error" | "disconnected";
+  status:
+    | "ready"
+    | "connecting"
+    | "listening"
+    | "processing"
+    | "error"
+    | "disconnected";
   startTime: number | null;
   elapsed: number;
 }

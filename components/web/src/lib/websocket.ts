@@ -7,164 +7,195 @@ import {
   activities,
   logs,
 } from "./stores";
-import { createAudioCapture, createAudioPlayback } from "./audio";
 import { get } from "svelte/store";
 
 export interface VoiceSession {
   start: () => Promise<void>;
-  stop: () => void;
+  stop: () => Promise<void>;
+  toggle: () => Promise<void>;
+  playLastRecording: () => void;
 }
 
 export function createVoiceSession(): VoiceSession {
-  let ws: WebSocket | null = null;
-  let ttsFinishTimeout: ReturnType<typeof setTimeout> | null = null;
+  const STOP_TAIL_CAPTURE_MS = 3000;
+  let mediaStream: MediaStream | null = null;
+  let mediaRecorder: MediaRecorder | null = null;
+  let currentRecordingChunks: BlobPart[] = [];
+  let lastRecordingUrl: string | null = null;
+  let lastRecordingAudio: HTMLAudioElement | null = null;
 
-  const audioCapture = createAudioCapture();
-  const audioPlayback = createAudioPlayback();
-
-  function handleEvent(event: ServerEvent) {
-    const turn = get(currentTurn);
-
-    switch (event.type) {
-      case "stt_chunk":
-        if (!turn.active) {
-          // New turn - save previous waterfall data and reset
-          const prevTurn = get(currentTurn);
-          if (prevTurn.turnStartTs) {
-            waterfallData.set({ ...prevTurn });
-          }
-          currentTurn.startTurn(event.ts);
-        }
-        currentTurn.sttStart(event.ts);
-        currentTurn.sttChunk(event.transcript);
-        break;
-
-      case "stt_output":
-        currentTurn.sttEnd(event.ts, event.transcript);
-        activities.add("stt", "Transcription", event.transcript);
-        break;
-
-      case "agent_chunk":
-        currentTurn.agentChunk(event.ts, event.text);
-        break;
-
-      case "tool_call":
-        activities.add(
-          "tool",
-          `Tool: ${event.name}`,
-          "Called with arguments:",
-          event.args
-        );
-        logs.log(`Tool call: ${event.name}`);
-        break;
-
-      case "tool_result":
-        activities.add("tool", `Tool Result: ${event.name}`, event.result);
-        logs.log(`Tool result: ${event.result}`);
-        break;
-
-      case "tts_chunk": {
-        const currentTurnState = get(currentTurn);
-        if (!currentTurnState.ttsStartTs && currentTurnState.response) {
-          activities.add("agent", "Agent Response", currentTurnState.response);
-        }
-        currentTurn.ttsChunk(event.ts);
-        audioPlayback.push(event.audio);
-
-        // Debounce: finish turn after TTS stops
-        if (ttsFinishTimeout) clearTimeout(ttsFinishTimeout);
-        ttsFinishTimeout = setTimeout(() => {
-          const t = get(currentTurn);
-          if (t.active && t.sttEndTs && t.ttsEndTs) {
-            finishTurn();
-          }
-        }, 300);
-        break;
-      }
+  function saveLastRecording(blob: Blob): void {
+    if (lastRecordingAudio) {
+      lastRecordingAudio.pause();
+      lastRecordingAudio.currentTime = 0;
     }
+    if (lastRecordingUrl) {
+      URL.revokeObjectURL(lastRecordingUrl);
+      lastRecordingUrl = null;
+    }
+    if (!blob.size) return;
+
+    lastRecordingUrl = URL.createObjectURL(blob);
+    lastRecordingAudio = new Audio(lastRecordingUrl);
   }
 
   function finishTurn() {
     const turn = get(currentTurn);
     waterfallData.set({ ...turn });
+    // Keep existing metric shape; only STT data is present in HTTP mode.
     latencyStats.recordTurn(turn);
     currentTurn.finishTurn();
   }
 
+  function pickSupportedMimeType(): string {
+    const candidates = [
+      "audio/webm;codecs=opus",
+      "audio/webm",
+      "audio/mp4",
+    ];
+    for (const candidate of candidates) {
+      if (MediaRecorder.isTypeSupported(candidate)) {
+        return candidate;
+      }
+    }
+    return "";
+  }
+
+  function cleanupRecorder(): void {
+    if (mediaStream) {
+      mediaStream.getTracks().forEach((track) => track.stop());
+      mediaStream = null;
+    }
+    mediaRecorder = null;
+  }
+
   async function start(): Promise<void> {
-    // Reset all state
+    // Reset per-turn state, but keep historical activity/log output visible.
     session.reset();
     currentTurn.reset();
     latencyStats.reset();
     waterfallData.set(null);
-    activities.clear();
-    logs.clear();
-    audioPlayback.stop();
 
     session.setStatus("connecting");
+    currentRecordingChunks = [];
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      const mimeType = pickSupportedMimeType();
+      mediaRecorder = mimeType
+        ? new MediaRecorder(mediaStream, { mimeType })
+        : new MediaRecorder(mediaStream);
 
-    // Connect WebSocket
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
-    ws.binaryType = "arraybuffer";
+      mediaRecorder.ondataavailable = (event: BlobEvent) => {
+        if (event.data.size > 0) {
+          currentRecordingChunks.push(event.data);
+        }
+      };
 
-    ws.onopen = async () => {
+      mediaRecorder.start(250);
       session.connect();
-      logs.log("Session started");
-
-      try {
-        await audioCapture.start((chunk) => {
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(chunk);
-          }
-        });
-        logs.log("Microphone access granted");
-        logs.log("Streaming PCM audio (16kHz, 16-bit, mono)");
-      } catch (err) {
-        console.error(err);
-        logs.log(
-          `Error: ${err instanceof Error ? err.message : "Unknown error"}`
-        );
-        session.setStatus("error");
-        stop();
-      }
-    };
-
-    ws.onmessage = async (event) => {
-      const eventData: ServerEvent = JSON.parse(event.data);
-      handleEvent(eventData);
-    };
-
-    ws.onclose = () => {
-      session.disconnect();
-      logs.log("WebSocket disconnected");
-    };
-
-    ws.onerror = (e) => {
-      console.error(e);
-      logs.log("WebSocket error");
+      logs.log("Recording started");
+    } catch (err) {
+      console.error(err);
+      logs.log(`Error: ${err instanceof Error ? err.message : "Unknown error"}`);
       session.setStatus("error");
-    };
+      cleanupRecorder();
+    }
   }
 
-  function stop(): void {
-    logs.log("Session ended");
-
-    if (ttsFinishTimeout) {
-      clearTimeout(ttsFinishTimeout);
-      ttsFinishTimeout = null;
+  async function stop(): Promise<void> {
+    if (!mediaRecorder || !mediaStream || mediaRecorder.state !== "recording") {
+      return;
     }
 
-    audioPlayback.stop();
-    audioCapture.stop();
+    logs.log("Stop requested. Capturing tail audio...");
+    session.setRecording(false);
+    session.setStatus("processing");
 
-    if (ws) {
-      ws.close();
-      ws = null;
+    await new Promise<void>((resolve) => {
+      window.setTimeout(resolve, STOP_TAIL_CAPTURE_MS);
+    });
+
+    const stopPromise = new Promise<void>((resolve) => {
+      mediaRecorder!.addEventListener("stop", () => resolve(), { once: true });
+    });
+    mediaRecorder.stop();
+    await stopPromise;
+
+    const mimeType = mediaRecorder.mimeType || "audio/webm";
+    const recordingBlob = new Blob(currentRecordingChunks, { type: mimeType });
+    saveLastRecording(recordingBlob);
+    currentRecordingChunks = [];
+
+    cleanupRecorder();
+
+    if (!recordingBlob.size) {
+      logs.log("No audio captured");
+      session.reset();
+      return;
     }
 
-    session.reset();
+    const startedAt = Date.now();
+    currentTurn.startTurn(startedAt);
+    currentTurn.sttStart(startedAt);
+
+    const formData = new FormData();
+    const extension = mimeType.includes("mp4") ? "m4a" : "webm";
+    formData.append("audio", recordingBlob, `recording.${extension}`);
+    formData.append("language", "en");
+
+    try {
+      const response = await fetch("/api/transcribe", {
+        method: "POST",
+        body: formData,
+      });
+      if (!response.ok) {
+        throw new Error(`Transcription failed (${response.status})`);
+      }
+
+      const eventData = (await response.json()) as ServerEvent;
+      if (eventData.type !== "stt_output") {
+        throw new Error("Unexpected response payload");
+      }
+
+      currentTurn.sttEnd(eventData.ts, eventData.transcript);
+      activities.add("stt", "Transcription", eventData.transcript);
+      logs.log("Transcription received");
+      finishTurn();
+      session.reset();
+    } catch (error) {
+      console.error(error);
+      logs.log("Failed to transcribe recording");
+      session.setStatus("error");
+    }
   }
 
-  return { start, stop };
+  async function toggle(): Promise<void> {
+    const state = get(session);
+    if (state.recording) {
+      await stop();
+      return;
+    }
+    await start();
+  }
+
+  function playLastRecording(): void {
+    if (!lastRecordingAudio) {
+      logs.log("No recording available to play yet");
+      return;
+    }
+
+    lastRecordingAudio.currentTime = 0;
+    void lastRecordingAudio.play().catch((error) => {
+      console.error(error);
+      logs.log("Failed to play recording");
+    });
+  }
+
+  return { start, stop, toggle, playLastRecording };
 }

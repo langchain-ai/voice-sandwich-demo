@@ -27,6 +27,7 @@ class AssemblyAISTT:
         api_key: Optional[str] = None,
         sample_rate: int = 16000,
         format_turns: bool = True,
+        speech_model: str = "universal",
     ):
         self.api_key = api_key or os.getenv("ASSEMBLYAI_API_KEY")
         if not self.api_key:
@@ -34,6 +35,7 @@ class AssemblyAISTT:
 
         self.sample_rate = sample_rate
         self.format_turns = format_turns
+        self.speech_model = speech_model
         self._ws: Optional[WebSocketClientProtocol] = None
         self._connection_signal = asyncio.Event()
         self._close_signal = asyncio.Event()
@@ -90,9 +92,21 @@ class AssemblyAISTT:
                 except websockets.exceptions.ConnectionClosed:
                     print("AssemblyAISTT: WebSocket connection closed")
 
-    async def send_audio(self, audio_chunk: bytes) -> None:
+    async def send_audio(self, audio_chunk: bytes) -> bool:
+        """
+        Send one audio chunk to AssemblyAI.
+
+        Returns False when the upstream websocket has already closed, so callers
+        can stop streaming without raising noisy traceback errors.
+        """
         ws = await self._ensure_connection()
-        await ws.send(audio_chunk)
+        if ws.close_code is not None:
+            return False
+        try:
+            await ws.send(audio_chunk)
+            return True
+        except websockets.exceptions.ConnectionClosed:
+            return False
 
     async def close(self) -> None:
         if self._ws and self._ws.close_code is None:
@@ -112,6 +126,7 @@ class AssemblyAISTT:
             {
                 "sample_rate": self.sample_rate,
                 "format_turns": str(self.format_turns).lower(),
+                "speech_model": self.speech_model,
             }
         )
         url = f"wss://streaming.assemblyai.com/v3/ws?{params}"

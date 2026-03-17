@@ -52,6 +52,10 @@ function createSessionStore() {
       update((s) => ({ ...s, status }));
     },
 
+    setRecording(recording: boolean) {
+      update((s) => ({ ...s, recording }));
+    },
+
     reset() {
       if (timerInterval) {
         clearInterval(timerInterval);

@@ -46,7 +46,7 @@ function createLogStore() {
         message,
         timestamp: new Date(),
       };
-      update((entries) => [...entries, entry].slice(-100)); // Keep max 100 entries
+      update((entries) => [entry, ...entries].slice(0, 100)); // Keep max 100 entries
     },
 
     clear() {
