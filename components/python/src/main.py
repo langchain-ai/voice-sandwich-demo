@@ -21,7 +21,14 @@ LOGGER = logging.getLogger("uvicorn.error")
 load_dotenv()
 OPENAI_REALTIME_MODEL = os.getenv("OPENAI_REALTIME_MODEL", "gpt-4o-mini-realtime-preview")
 OPENAI_STT_MODEL = os.getenv("OPENAI_STT_MODEL", "gpt-4o-mini-transcribe")
+OPENAI_RESPONSE_LANGUAGE = os.getenv("OPENAI_RESPONSE_LANGUAGE", "en")
+OPENAI_STT_LANGUAGE = os.getenv("OPENAI_STT_LANGUAGE", OPENAI_RESPONSE_LANGUAGE)
 OPENAI_TTS_VOICE = os.getenv("OPENAI_TTS_VOICE", "alloy")
+OPENAI_TTS_LANGUAGE = os.getenv("OPENAI_TTS_LANGUAGE", OPENAI_RESPONSE_LANGUAGE)
+OPENAI_TTS_RENDER_PROMPT_TEMPLATE = os.getenv(
+    "OPENAI_TTS_RENDER_PROMPT_TEMPLATE",
+    "Read the following text in {language}. Do not add anything else: {text}",
+)
 OPENAI_REALTIME_URL = f"wss://api.openai.com/v1/realtime?model={OPENAI_REALTIME_MODEL}"
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
@@ -161,6 +168,9 @@ class OpenAIRealtimeSpeaker:
     async def synthesize(self, text: str) -> AsyncIterator[dict]:
         if not self._ws:
             raise RuntimeError("Realtime speaker connection is not initialized")
+        render_text = OPENAI_TTS_RENDER_PROMPT_TEMPLATE.format(
+            text=text, language=OPENAI_TTS_LANGUAGE
+        )
 
         await self._ws.send(
             json.dumps(
@@ -172,7 +182,7 @@ class OpenAIRealtimeSpeaker:
                         "content": [
                             {
                                 "type": "input_text",
-                                "text": f"Please say exactly this text: {text}",
+                                "text": render_text,
                             }
                         ],
                     },
@@ -230,8 +240,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         },
         stream_mode="custom",
     )
+    run_result_task = asyncio.create_task(handler.aresult())
 
-    transcriber = OpenAIRealtimeTranscriber(language="en")
+    transcriber = OpenAIRealtimeTranscriber(language=OPENAI_STT_LANGUAGE)
     speaker = OpenAIRealtimeSpeaker()
     try:
         await transcriber.connect()
@@ -269,6 +280,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         while True:
             stream_event = await handler.receive_stream()
             if not stream_event:
+                if run_result_task.done():
+                    raise RuntimeError("SAF run completed unexpectedly")
                 continue
             if isinstance(stream_event, dict):
                 await websocket.send_json(stream_event)
@@ -281,7 +294,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         event_task = asyncio.create_task(pipe_transcripts_to_client())
         graph_stream_task = asyncio.create_task(pipe_graph_stream_to_client())
         done, pending = await asyncio.wait(
-            {audio_task, event_task, graph_stream_task},
+            {audio_task, event_task, graph_stream_task, run_result_task},
             return_when=asyncio.FIRST_COMPLETED,
         )
         for task in pending:
@@ -289,6 +302,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         with contextlib.suppress(asyncio.CancelledError):
             await asyncio.gather(*pending)
         for task in done:
+            if task is run_result_task:
+                raise RuntimeError("SAF run ended unexpectedly")
             exc = task.exception()
             if exc and not isinstance(exc, WebSocketDisconnect):
                 raise exc
@@ -296,6 +311,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         LOGGER.info("Client websocket disconnected")
     finally:
         handler.close_stream()
+        if not run_result_task.done():
+            run_result_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await run_result_task
         await transcriber.close()
         await speaker.close()
         with contextlib.suppress(RuntimeError):

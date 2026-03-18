@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import time
 from typing import Any
@@ -16,6 +17,25 @@ from saf_python_sdk.advanced_graph import (
 from saf_python_sdk.types import Command, Send
 from typing_extensions import TypedDict
 
+LOGGER = logging.getLogger("uvicorn.error")
+OPENAI_RESPONSE_LANGUAGE = os.getenv("OPENAI_RESPONSE_LANGUAGE", "en")
+OPENAI_ASSISTANT_SYSTEM_PROMPT = os.getenv(
+    "OPENAI_ASSISTANT_SYSTEM_PROMPT",
+    (
+        f"You are a concise assistant. Reply in {OPENAI_RESPONSE_LANGUAGE}. "
+        "Use tools when helpful, and incorporate tool results in your answer."
+    ),
+)
+OPENAI_TIMER_TEXT = os.getenv("OPENAI_TIMER_TEXT", "I am here. What can I do for you?")
+GET_WEATHER_TEMPLATE = os.getenv(
+    "GET_WEATHER_TEMPLATE",
+    "Weather for {location}: 24C, partly cloudy.",
+)
+INTERNET_SEARCH_TEMPLATE = os.getenv(
+    "INTERNET_SEARCH_TEMPLATE",
+    "Internet search result for '{query}': No live search backend configured.",
+)
+
 
 class VoiceGraphState(TypedDict):
     user_messages: list[str]
@@ -26,13 +46,13 @@ class VoiceGraphState(TypedDict):
 @tool("GetWeather")
 def get_weather(location: str) -> str:
     """Get weather information for a location."""
-    return f"Weather for {location}: 24C, partly cloudy."
+    return GET_WEATHER_TEMPLATE.format(location=location)
 
 
 @tool("InternetSearch")
 def internet_search(query: str) -> str:
     """Search internet and return a short summary."""
-    return f"Internet search result for '{query}': No live search backend configured."
+    return INTERNET_SEARCH_TEMPLATE.format(query=query)
 
 
 TOOLS = [get_weather, internet_search]
@@ -51,17 +71,42 @@ def _build_llm() -> ChatOpenAI:
 def build_voice_graph():
     llm = _build_llm()
 
+    def parse_wait_result(wait_result: Any) -> tuple[bool, dict[str, list[Any]]]:
+        timer_fired = False
+        channel_batches: dict[str, list[Any]] = {}
+        for condition in getattr(wait_result, "conditions", []):
+            if not getattr(condition, "met", False):
+                continue
+            channel_name = getattr(condition, "channel_name", None)
+            if channel_name is None:
+                timer_fired = True
+                continue
+            values = getattr(condition, "values", None) or []
+            channel_batches[channel_name] = [*channel_batches.get(channel_name, []), *values]
+        return timer_fired, channel_batches
+
+    async def start_node(state: VoiceGraphState) -> Command:
+        return Command(goto=Send("llm_node", None))
+
     async def llm_node(ctx: Context, state: VoiceGraphState) -> Command:
-        event = await ctx.wait_for(
+        wait_result = await ctx.wait_for(
             any_of(
                 channel_condition("user_buffered_message", min=1, max=100),
                 channel_condition("tool_call_results", min=1, max=100),
-                timer_condition(seconds=10),
+                timer_condition(seconds=30),
             )
         )
 
-        if event["condition"] == "timer":
-            timer_text = "what can I do for you?"
+        timer_fired, channel_batches = parse_wait_result(wait_result)
+        LOGGER.info(
+            "[saf-graph] llm_node wake: timer_fired=%s user_msgs=%s tool_results=%s",
+            timer_fired,
+            len(channel_batches.get("user_buffered_message", [])),
+            len(channel_batches.get("tool_call_results", [])),
+        )
+
+        if timer_fired and not channel_batches:
+            timer_text = OPENAI_TIMER_TEXT
             state["llm_messages"].append(timer_text)
             ctx.send_custom_stream_event(
                 {
@@ -73,17 +118,16 @@ def build_voice_graph():
             )
             return Command(update=state, goto=Send("llm_node", None))
 
-        channel = event["channel"]
-        raw_values = event["value"]
-        values = raw_values if isinstance(raw_values, list) else [raw_values]
+        for value in channel_batches.get("user_buffered_message", []):
+            state["user_messages"].append(str(value))
+        for value in channel_batches.get("tool_call_results", []):
+            state["tool_completion_results"].append(str(value))
 
-        if channel == "user_buffered_message":
-            for value in values:
-                state["user_messages"].append(str(value))
-        elif channel == "tool_call_results":
-            for value in values:
-                state["tool_completion_results"].append(str(value))
+        if not channel_batches:
+            LOGGER.info("[saf-graph] llm_node no channels met; continue waiting")
+            return Command(update=state, goto=Send("llm_node", None))
 
+        had_new_user_input = bool(channel_batches.get("user_buffered_message"))
         prompt_context = {
             "recent_user_messages": state["user_messages"][-20:],
             "recent_tool_results": state["tool_completion_results"][-20:],
@@ -92,10 +136,7 @@ def build_voice_graph():
         ai_message = await llm.ainvoke(
             [
                 SystemMessage(
-                    content=(
-                        "You are a concise assistant. Use tools when helpful. "
-                        "If tool results are available, use them in your response."
-                    )
+                    content=OPENAI_ASSISTANT_SYSTEM_PROMPT
                 ),
                 HumanMessage(content=json.dumps(prompt_context, ensure_ascii=False)),
             ]
@@ -118,14 +159,27 @@ def build_voice_graph():
             )
 
         sends: list[Send] = [Send("llm_node", None)]
-        for tool_call in getattr(ai_message, "tool_calls", []) or []:
-            sends.append(Send("tool_call_node", tool_call))
+        tool_calls = list(getattr(ai_message, "tool_calls", []) or [])
+        if tool_calls and not had_new_user_input:
+            LOGGER.warning(
+                "[saf-graph] suppressing %s tool calls (no new user input; likely loop)",
+                len(tool_calls),
+            )
+        else:
+            for tool_call in tool_calls:
+                sends.append(Send("tool_call_node", tool_call))
+            if tool_calls:
+                LOGGER.info(
+                    "[saf-graph] scheduling tool calls: %s",
+                    [tool_call.get("name", "unknown") for tool_call in tool_calls],
+                )
 
         return Command(update=state, goto=sends)
 
     async def tool_call_node(ctx: Context, tool_call: dict[str, Any]) -> None:
         tool_name = tool_call.get("name", "")
         tool_args = tool_call.get("args", {}) or {}
+        LOGGER.info("[saf-graph] tool_call_node execute: %s args=%s", tool_name, tool_args)
         tool = TOOLS_BY_NAME.get(tool_name)
 
         if not tool:
@@ -136,11 +190,13 @@ def build_voice_graph():
             except Exception as exc:  # pragma: no cover - tool runtime failures
                 result = f"Tool '{tool_name}' failed: {exc}"
 
+        LOGGER.info("[saf-graph] tool_call_node result: %s", result)
         ctx.publish_to_channel("tool_call_results", str(result))
 
     graph = AdvancedStateGraph(VoiceGraphState)
     graph.add_async_channel("user_buffered_message", str)
     graph.add_async_channel("tool_call_results", str)
-    graph.add_entry_node(llm_node)
+    graph.add_entry_node(start_node)
+    graph.add_node(llm_node)
     graph.add_node(tool_call_node)
     return graph.compile()
