@@ -4,6 +4,7 @@ import os
 import time
 from typing import Any
 
+from duckduckgo_search import DDGS
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
@@ -33,8 +34,9 @@ GET_WEATHER_TEMPLATE = os.getenv(
 )
 INTERNET_SEARCH_TEMPLATE = os.getenv(
     "INTERNET_SEARCH_TEMPLATE",
-    "Internet search result for '{query}': No live search backend configured.",
+    "Internet search results for '{query}':\n{results}",
 )
+INTERNET_SEARCH_MAX_RESULTS = int(os.getenv("INTERNET_SEARCH_MAX_RESULTS", "5"))
 
 
 class VoiceGraphState(TypedDict):
@@ -52,7 +54,25 @@ def get_weather(location: str) -> str:
 @tool("InternetSearch")
 def internet_search(query: str) -> str:
     """Search internet and return a short summary."""
-    return INTERNET_SEARCH_TEMPLATE.format(query=query)
+    results: list[str] = []
+    try:
+        with DDGS() as ddgs:
+            search_results = ddgs.text(query, max_results=INTERNET_SEARCH_MAX_RESULTS)
+            for item in search_results:
+                title = (item.get("title") or "").strip()
+                snippet = (item.get("body") or "").strip()
+                href = (item.get("href") or "").strip()
+                line = " | ".join(part for part in [title, snippet, href] if part)
+                if line:
+                    results.append(line)
+    except Exception as exc:  # pragma: no cover - network/provider issues
+        return f"Internet search failed for '{query}': {exc}"
+
+    if not results:
+        return f"No search results found for '{query}'."
+
+    joined = "\n".join(f"{idx + 1}. {line}" for idx, line in enumerate(results))
+    return INTERNET_SEARCH_TEMPLATE.format(query=query, results=joined)
 
 
 TOOLS = [get_weather, internet_search]
@@ -143,9 +163,7 @@ def build_voice_graph():
         )
 
         response_text = (
-            ai_message.text()
-            if hasattr(ai_message, "text")
-            else str(ai_message.content or "")
+            ai_message.text if hasattr(ai_message, "text") else str(ai_message.content or "")
         )
         if response_text.strip():
             state["llm_messages"].append(response_text.strip())
