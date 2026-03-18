@@ -268,13 +268,18 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             await transcriber.send_audio(audio_chunk)
 
     async def pipe_transcripts_to_client() -> None:
+        last_published_transcript = ""
         async for event in transcriber.receive_events():
             await websocket.send_json(event)
             if event.get("type") == "stt_output":
-                await handler.apublish_to_channel(
-                    "user_buffered_message",
-                    event.get("transcript", ""),
-                )
+                transcript = str(event.get("transcript", "")).strip()
+                if not transcript:
+                    continue
+                if transcript == last_published_transcript:
+                    LOGGER.info("Skip duplicate stt_output publish: %s", transcript)
+                    continue
+                await handler.apublish_to_channel("user_buffered_message", transcript)
+                last_published_transcript = transcript
 
     async def pipe_graph_stream_to_client() -> None:
         while True:

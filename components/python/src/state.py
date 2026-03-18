@@ -5,7 +5,7 @@ import time
 from typing import Any
 
 from duckduckgo_search import DDGS
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from saf_python_sdk.advanced_graph import (
@@ -26,6 +26,14 @@ OPENAI_ASSISTANT_SYSTEM_PROMPT = os.getenv(
         f"You are a concise assistant. Reply in {OPENAI_RESPONSE_LANGUAGE}. "
         "Use tools when helpful, and incorporate tool results in your answer."
     ),
+)
+OPENAI_RESPONSE_LENGTH_PROMPT = os.getenv(
+    "OPENAI_RESPONSE_LENGTH_PROMPT",
+    "Keep every reply short: no more than 3 sentences.",
+)
+OPENAI_AVOID_REPEAT_PROMPT = os.getenv(
+    "OPENAI_AVOID_REPEAT_PROMPT",
+    "Do not repeat prior assistant responses. If information was already provided, do not repeat it.",
 )
 OPENAI_TIMER_TEXT = os.getenv("OPENAI_TIMER_TEXT", "I am here. What can I do for you?")
 GET_WEATHER_TEMPLATE = os.getenv(
@@ -150,30 +158,43 @@ def build_voice_graph():
             LOGGER.info("[saf-graph] llm_node no channels met; continue waiting")
             return Command(update=state, goto=Send("llm_node", None))
 
-        prompt_context = {
-            "recent_user_messages": state["user_messages"][-20:],
-            "recent_tool_results": state["tool_completion_results"][-20:],
-            "recent_ai_messages": state["llm_messages"][-20:],
-        }
-        ai_message = await llm_with_tools.ainvoke(
-            [
-                SystemMessage(
-                    content=OPENAI_ASSISTANT_SYSTEM_PROMPT
-                ),
-                HumanMessage(content=json.dumps(prompt_context, ensure_ascii=False)),
-            ]
+        recent_user_messages = state["user_messages"][-20:]
+        recent_tool_results = state["tool_completion_results"][-20:]
+        recent_ai_messages = state["llm_messages"][-20:]
+        prompt_messages = [
+            SystemMessage(content=OPENAI_ASSISTANT_SYSTEM_PROMPT),
+            SystemMessage(content=OPENAI_RESPONSE_LENGTH_PROMPT),
+            SystemMessage(content=OPENAI_AVOID_REPEAT_PROMPT),
+        ]
+        prompt_messages.extend(
+            HumanMessage(content=text) for text in recent_user_messages if text.strip()
         )
+        prompt_messages.extend(
+            AIMessage(content=text) for text in recent_ai_messages if text.strip()
+        )
+        prompt_messages.extend(
+            ToolMessage(
+                content=text,
+                tool_call_id=f"historical_tool_result_{idx}",
+            )
+            for idx, text in enumerate(recent_tool_results)
+            if text.strip()
+        )
+
+        ai_message = await llm_with_tools.ainvoke(prompt_messages)
 
         response_text = (
             ai_message.text if hasattr(ai_message, "text") else str(ai_message.content or "")
         )
         if response_text.strip():
-            state["llm_messages"].append(response_text.strip())
+            normalized = response_text.strip()
+            LOGGER.info("[saf-graph] llm_node response: %s", normalized)
+            state["llm_messages"].append(normalized)
             ctx.send_custom_stream_event(
                 {
                     "type": "ai_text",
                     "who": "AI",
-                    "text": response_text.strip(),
+                    "text": normalized,
                     "ts": int(time.time() * 1000),
                 }
             )
