@@ -4,6 +4,7 @@ export type ServerEvent =
   | { type: "stt_output"; who: "You"; ts: number; transcript: string }
   | { type: "ai_text"; who: "AI"; ts: number; text: string }
   | { type: "ai_audio"; who: "AI"; ts: number; audio: string }
+  | { type: "ai_audio_end"; who: "AI"; ts: number }
   | { type: "error"; ts: number; message: string }
   | { type: "agent_chunk"; ts: number; text: string }
   | {

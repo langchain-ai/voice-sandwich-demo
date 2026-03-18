@@ -28,7 +28,7 @@
     </button>
   </div>
 
-  <div class="max-h-80 overflow-y-auto flex flex-col gap-2.5">
+  <div class="max-h-[40rem] overflow-y-auto flex flex-col gap-2.5">
     {#if $activities.length === 0}
       <div class="text-gray-400 text-sm py-5 text-center">No activity yet...</div>
     {:else}

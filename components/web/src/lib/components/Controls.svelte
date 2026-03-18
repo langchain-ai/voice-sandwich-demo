@@ -52,13 +52,13 @@
 
   <div class="flex items-center gap-2 py-2.5 px-3.5 bg-gray-100 rounded-lg">
     <span class="w-2.5 h-2.5 rounded-full shrink-0 transition-all duration-300 {config.dot}"></span>
-    <span class="text-sm font-medium text-gray-600 flex-1">{config.text}</span>
+    <span class="text-sm font-medium text-gray-600">{config.text}</span>
+    {#if $session.connected}
+      <span class="text-gray-300">|</span>
+      <span class="text-xs text-gray-600 flex-1 truncate">
+        💡 Session is active — just speak naturally. End session when you're done.
+      </span>
+    {/if}
   </div>
-
-  {#if $session.connected}
-    <div class="mt-3 py-2.5 px-3.5 bg-cyan-400/10 border border-cyan-400/20 rounded-lg text-xs text-gray-600 text-center">
-      💡 Session is active — just speak naturally. End session when you're done.
-    </div>
-  {/if}
 </div>
 

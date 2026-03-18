@@ -48,11 +48,23 @@ export function createVoiceSession(): VoiceSession {
         break;
       }
       case "ai_text": {
+        currentTurn.startTurn(event.ts);
+        currentTurn.agentStart(event.ts);
+        currentTurn.agentChunk(event.ts, event.text);
         activities.add("agent", "AI", `AI: ${event.text}`);
         break;
       }
       case "ai_audio": {
+        if (!turn.active) {
+          currentTurn.startTurn(event.ts);
+        }
+        currentTurn.ttsChunk(event.ts);
         audioPlayback.push(event.audio);
+        break;
+      }
+      case "ai_audio_end": {
+        waterfallData.set({ ...get(currentTurn) });
+        currentTurn.finishTurn();
         break;
       }
       default:

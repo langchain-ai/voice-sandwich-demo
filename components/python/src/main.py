@@ -198,6 +198,11 @@ class OpenAIRealtimeSpeaker:
                         "ts": int(time.time() * 1000),
                     }
             elif event_type == "response.done":
+                yield {
+                    "type": "ai_audio_end",
+                    "who": "AI",
+                    "ts": int(time.time() * 1000),
+                }
                 break
             elif event_type == "error":
                 LOGGER.error("OpenAI realtime TTS error: %s", event)
