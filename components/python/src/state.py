@@ -5,7 +5,7 @@ import time
 from typing import Any
 
 from duckduckgo_search import DDGS
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from saf_python_sdk.advanced_graph import (
@@ -158,8 +158,8 @@ def build_voice_graph():
             LOGGER.info("[saf-graph] llm_node no channels met; continue waiting")
             return Command(update=state, goto=Send("llm_node", None))
 
-        recent_user_messages = state["user_messages"][-20:]
-        recent_tool_results = state["tool_completion_results"][-20:]
+        recent_user_messages = state["user_messages"][-50:]
+        recent_tool_results = state["tool_completion_results"][-10:]
         recent_ai_messages = state["llm_messages"][-20:]
         prompt_messages = [
             SystemMessage(content=OPENAI_ASSISTANT_SYSTEM_PROMPT),
@@ -173,10 +173,7 @@ def build_voice_graph():
             AIMessage(content=text) for text in recent_ai_messages if text.strip()
         )
         prompt_messages.extend(
-            ToolMessage(
-                content=text,
-                tool_call_id=f"historical_tool_result_{idx}",
-            )
+            SystemMessage(content=f"Tool completion result #{idx + 1}: {text}")
             for idx, text in enumerate(recent_tool_results)
             if text.strip()
         )
