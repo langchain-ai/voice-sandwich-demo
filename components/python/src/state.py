@@ -129,9 +129,6 @@ def build_voice_graph():
             channel_batches[channel_name] = [*channel_batches.get(channel_name, []), *values]
         return timer_fired, channel_batches
 
-    async def start_node(state: VoiceGraphState) -> Command:
-        return Command(goto=Send("llm_node", None))
-
     async def llm_node(ctx: Context, state: VoiceGraphState) -> Command:
         LOGGER.info("[saf-graph] llm_node wake: state=%s", state)
 
@@ -266,7 +263,6 @@ def build_voice_graph():
     graph = AdvancedStateGraph(VoiceGraphState)
     graph.add_async_channel("user_buffered_message", str)
     graph.add_async_channel("tool_call_results", str)
-    graph.add_entry_node(start_node)
-    graph.add_node(llm_node)
+    graph.add_entry_node(llm_node)
     graph.add_node(tool_call_node)
     return graph.compile()
