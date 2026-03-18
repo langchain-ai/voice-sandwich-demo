@@ -4,7 +4,6 @@ import os
 import time
 from typing import Any
 
-from duckduckgo_search import DDGS
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
@@ -16,6 +15,7 @@ from saf_python_sdk.advanced_graph import (
     timer_condition,
 )
 from saf_python_sdk.types import Command, Send
+from tavily import TavilyClient
 from typing_extensions import TypedDict
 
 LOGGER = logging.getLogger("uvicorn.error")
@@ -29,7 +29,7 @@ OPENAI_ASSISTANT_SYSTEM_PROMPT = os.getenv(
 )
 OPENAI_RESPONSE_LENGTH_PROMPT = os.getenv(
     "OPENAI_RESPONSE_LENGTH_PROMPT",
-    "Keep every reply short: no more than 3 sentences.",
+    "Keep every reply short: no more than 1 sentences.",
 )
 OPENAI_AVOID_REPEAT_PROMPT = os.getenv(
     "OPENAI_AVOID_REPEAT_PROMPT",
@@ -45,6 +45,10 @@ INTERNET_SEARCH_TEMPLATE = os.getenv(
     "Internet search results for '{query}':\n{results}",
 )
 INTERNET_SEARCH_MAX_RESULTS = int(os.getenv("INTERNET_SEARCH_MAX_RESULTS", "5"))
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+TAVILY_SEARCH_DEPTH = os.getenv("TAVILY_SEARCH_DEPTH", "advanced")
+TAVILY_SEARCH_TOPIC = os.getenv("TAVILY_SEARCH_TOPIC", "general")
+TAVILY_SEARCH_COUNTRY = os.getenv("TAVILY_SEARCH_COUNTRY", "")
 
 
 class VoiceGraphState(TypedDict):
@@ -62,17 +66,28 @@ def get_weather(location: str) -> str:
 @tool("InternetSearch")
 def internet_search(query: str) -> str:
     """Search internet and return a short summary."""
+    if not TAVILY_API_KEY:
+        return "Internet search is not configured: missing TAVILY_API_KEY."
+
     results: list[str] = []
     try:
-        with DDGS() as ddgs:
-            search_results = ddgs.text(query, max_results=INTERNET_SEARCH_MAX_RESULTS)
-            for item in search_results:
-                title = (item.get("title") or "").strip()
-                snippet = (item.get("body") or "").strip()
-                href = (item.get("href") or "").strip()
-                line = " | ".join(part for part in [title, snippet, href] if part)
-                if line:
-                    results.append(line)
+        client = TavilyClient(api_key=TAVILY_API_KEY)
+        response = client.search(
+            query=query,
+            search_depth=TAVILY_SEARCH_DEPTH,
+            topic=TAVILY_SEARCH_TOPIC,
+            max_results=INTERNET_SEARCH_MAX_RESULTS,
+            country=TAVILY_SEARCH_COUNTRY or None,
+            include_answer=False,
+            include_raw_content=False,
+        )
+        for item in response.get("results", []) or []:
+            title = (item.get("title") or "").strip()
+            snippet = (item.get("content") or "").strip()
+            href = (item.get("url") or "").strip()
+            line = " | ".join(part for part in [title, snippet, href] if part)
+            if line:
+                results.append(line)
     except Exception as exc:  # pragma: no cover - network/provider issues
         return f"Internet search failed for '{query}': {exc}"
 
@@ -137,16 +152,17 @@ def build_voice_graph():
         )
 
         if timer_fired and not channel_batches:
-            timer_text = OPENAI_TIMER_TEXT
-            state["llm_messages"].append(timer_text)
-            ctx.send_custom_stream_event(
-                {
-                    "type": "ai_text",
-                    "who": "AI",
-                    "text": timer_text,
-                    "ts": int(time.time() * 1000),
-                }
-            )
+            timer_text = OPENAI_TIMER_TEXT.strip()
+            if timer_text:
+                state["llm_messages"].append(timer_text)
+                ctx.send_custom_stream_event(
+                    {
+                        "type": "ai_text",
+                        "who": "AI",
+                        "text": timer_text,
+                        "ts": int(time.time() * 1000),
+                    }
+                )
             return Command(update=state, goto=Send("llm_node", None))
 
         for value in channel_batches.get("user_buffered_message", []):
@@ -158,17 +174,38 @@ def build_voice_graph():
             LOGGER.info("[saf-graph] llm_node no channels met; continue waiting")
             return Command(update=state, goto=Send("llm_node", None))
 
-        recent_user_messages = state["user_messages"][-50:]
-        recent_tool_results = state["tool_completion_results"][-10:]
+        latest_user_message = ""
+        for value in channel_batches.get("user_buffered_message", []):
+            text = str(value).strip()
+            if text:
+                latest_user_message = text
+        if not latest_user_message:
+            # Tool results may arrive without a fresh user message in the same wake-up.
+            for text in reversed(state["user_messages"]):
+                text = text.strip()
+                if text:
+                    latest_user_message = text
+                    break
+        if not latest_user_message:
+            latest_user_message = "Please continue based on the latest tool results and conversation context."
+
+        previous_user_messages = [text for text in state["user_messages"][:-1] if text.strip()][-10:]
+        recent_tool_results = [text for text in state["tool_completion_results"] if text.strip()][-5:]
         recent_ai_messages = state["llm_messages"][-20:]
         prompt_messages = [
             SystemMessage(content=OPENAI_ASSISTANT_SYSTEM_PROMPT),
             SystemMessage(content=OPENAI_RESPONSE_LENGTH_PROMPT),
             SystemMessage(content=OPENAI_AVOID_REPEAT_PROMPT),
         ]
-        prompt_messages.extend(
-            HumanMessage(content=text) for text in recent_user_messages if text.strip()
-        )
+        if previous_user_messages:
+            prompt_messages.append(
+                SystemMessage(
+                    content=(
+                        "Conversation context (older user messages, for reference only):\n"
+                        + "\n".join(f"- {text}" for text in previous_user_messages)
+                    )
+                )
+            )
         prompt_messages.extend(
             AIMessage(content=text) for text in recent_ai_messages if text.strip()
         )
@@ -177,6 +214,7 @@ def build_voice_graph():
             for idx, text in enumerate(recent_tool_results)
             if text.strip()
         )
+        prompt_messages.append(HumanMessage(content=latest_user_message))
 
         ai_message = await llm_with_tools.ainvoke(prompt_messages)
 

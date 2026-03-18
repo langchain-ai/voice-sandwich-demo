@@ -15,6 +15,7 @@ dependencies = [
     "python-dotenv",
     "python-multipart>=0.0.22",
     "saf-python-sdk>=0.1.4",
+    "tavily-python>=0.7.23",
     "uvicorn>=0.38.0",
     "websockets",
 ]
