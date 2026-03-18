@@ -7,10 +7,7 @@
 
 <div class="max-w-3xl mx-auto">
   <Header />
-  <Controls
-    onToggle={() => voiceSession.toggle()}
-    onPlayLast={() => voiceSession.playLastRecording()}
-  />
+  <Controls onStart={() => voiceSession.start()} onStop={() => voiceSession.stop()} />
   <PipelineCard />
   <ActivityFeed />
   <Console />
