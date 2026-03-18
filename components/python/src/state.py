@@ -36,6 +36,10 @@ OPENAI_AVOID_REPEAT_PROMPT = os.getenv(
     "Do not repeat prior assistant responses. If information was already provided, do not repeat it.",
 )
 OPENAI_TIMER_TEXT = os.getenv("OPENAI_TIMER_TEXT", "I am here. What can I do for you?")
+OPENAI_TOOL_CALL_STATUS_TEXT = os.getenv(
+    "OPENAI_TOOL_CALL_STATUS_TEXT",
+    "I am using tools to gather information. Please wait.",
+)
 GET_WEATHER_TEMPLATE = os.getenv(
     "GET_WEATHER_TEMPLATE",
     "Weather for {location}: 24C, partly cloudy.",
@@ -231,8 +235,22 @@ def build_voice_graph():
                 }
             )
 
-        sends: list[Send] = [Send("llm_node", None)]
         tool_calls = list(getattr(ai_message, "tool_calls", []) or [])
+        if tool_calls and not response_text.strip():
+            status_text = OPENAI_TOOL_CALL_STATUS_TEXT.strip()
+            if status_text:
+                LOGGER.info("[saf-graph] llm_node tool-status: %s", status_text)
+                state["llm_messages"].append(status_text)
+                ctx.send_custom_stream_event(
+                    {
+                        "type": "ai_text",
+                        "who": "AI",
+                        "text": status_text,
+                        "ts": int(time.time() * 1000),
+                    }
+                )
+
+        sends: list[Send] = [Send("llm_node", None)]
         for tool_call in tool_calls:
             sends.append(Send("tool_call_node", tool_call))
         if tool_calls:
