@@ -7,10 +7,12 @@ dependencies = [
     "langchain",
     "langchain-anthropic>=1.2.0",
     "langchain-core>=1.1.0",
+    "langchain-openai>=1.1.9",
     "langgraph>=1.0.4",
     "openai>=2.29.0",
     "python-dotenv",
     "python-multipart>=0.0.22",
+    "saf-python-sdk>=0.1.4",
     "uvicorn>=0.38.0",
     "websockets",
 ]
