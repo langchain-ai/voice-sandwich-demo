@@ -8,6 +8,7 @@ import {
 } from "./stores";
 import { get } from "svelte/store";
 import { createAudioCapture } from "./audio";
+import { createAudioPlayback } from "./audio";
 
 export interface VoiceSession {
   start: () => Promise<void>;
@@ -17,6 +18,7 @@ export interface VoiceSession {
 export function createVoiceSession(): VoiceSession {
   let ws: WebSocket | null = null;
   const audioCapture = createAudioCapture();
+  const audioPlayback = createAudioPlayback();
 
   function handleEvent(event: ServerEvent): void {
     const turn = get(currentTurn);
@@ -40,9 +42,17 @@ export function createVoiceSession(): VoiceSession {
           currentTurn.sttStart(event.ts);
         }
         currentTurn.sttEnd(event.ts, event.transcript);
-        activities.add("stt", "Transcription", event.transcript);
+        activities.add("stt", "You", `You: ${event.transcript}`);
         waterfallData.set({ ...get(currentTurn) });
         currentTurn.finishTurn();
+        break;
+      }
+      case "ai_text": {
+        activities.add("agent", "AI", `AI: ${event.text}`);
+        break;
+      }
+      case "ai_audio": {
+        audioPlayback.push(event.audio);
         break;
       }
       default:
@@ -99,6 +109,7 @@ export function createVoiceSession(): VoiceSession {
 
   async function stop(): Promise<void> {
     audioCapture.stop();
+    audioPlayback.stop();
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.close(1000, "session ended");
     }

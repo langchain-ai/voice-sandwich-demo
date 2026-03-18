@@ -20,6 +20,7 @@ LOGGER = logging.getLogger("uvicorn.error")
 load_dotenv()
 OPENAI_REALTIME_MODEL = os.getenv("OPENAI_REALTIME_MODEL", "gpt-4o-mini-realtime-preview")
 OPENAI_STT_MODEL = os.getenv("OPENAI_STT_MODEL", "gpt-4o-mini-transcribe")
+OPENAI_TTS_VOICE = os.getenv("OPENAI_TTS_VOICE", "alloy")
 OPENAI_REALTIME_URL = f"wss://api.openai.com/v1/realtime?model={OPENAI_REALTIME_MODEL}"
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
@@ -106,6 +107,7 @@ class OpenAIRealtimeTranscriber:
                 if delta:
                     yield {
                         "type": "stt_chunk",
+                        "who": "You",
                         "transcript": delta,
                         "ts": int(time.time() * 1000),
                     }
@@ -114,11 +116,92 @@ class OpenAIRealtimeTranscriber:
                 if transcript:
                     yield {
                         "type": "stt_output",
+                        "who": "You",
                         "transcript": transcript,
                         "ts": int(time.time() * 1000),
                     }
             elif event_type == "error":
                 LOGGER.error("OpenAI realtime error: %s", event)
+
+    async def close(self) -> None:
+        if self._ws and self._ws.close_code is None:
+            await self._ws.close()
+        self._ws = None
+
+
+class OpenAIRealtimeSpeaker:
+    """Generate streamed audio from text via OpenAI Realtime."""
+
+    def __init__(self) -> None:
+        self._ws = None
+
+    async def connect(self) -> None:
+        self._ws = await websockets.connect(
+            OPENAI_REALTIME_URL,
+            additional_headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "OpenAI-Beta": "realtime=v1",
+            },
+        )
+        await self._ws.send(
+            json.dumps(
+                {
+                    "type": "session.update",
+                    "session": {
+                        "output_audio_format": "pcm16",
+                        "voice": OPENAI_TTS_VOICE,
+                    },
+                }
+            )
+        )
+
+    async def synthesize(self, text: str) -> AsyncIterator[dict]:
+        if not self._ws:
+            raise RuntimeError("Realtime speaker connection is not initialized")
+
+        await self._ws.send(
+            json.dumps(
+                {
+                    "type": "conversation.item.create",
+                    "item": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": f"Please say exactly this text: {text}",
+                            }
+                        ],
+                    },
+                }
+            )
+        )
+        await self._ws.send(
+            json.dumps(
+                {
+                    "type": "response.create",
+                    "response": {"modalities": ["audio", "text"]},
+                }
+            )
+        )
+
+        async for raw_event in self._ws:
+            event = json.loads(raw_event)
+            event_type = event.get("type")
+            if event_type == "response.audio.delta":
+                delta = event.get("delta", "")
+                if delta:
+                    yield {
+                        "type": "ai_audio",
+                        "who": "AI",
+                        "audio": delta,
+                        "ts": int(time.time() * 1000),
+                    }
+            elif event_type == "response.done":
+                break
+            elif event_type == "error":
+                LOGGER.error("OpenAI realtime TTS error: %s", event)
+                break
 
     async def close(self) -> None:
         if self._ws and self._ws.close_code is None:
@@ -132,8 +215,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     LOGGER.info("Client websocket accepted")
 
     transcriber = OpenAIRealtimeTranscriber(language="en")
+    speaker = OpenAIRealtimeSpeaker()
     try:
         await transcriber.connect()
+        await speaker.connect()
     except Exception:
         LOGGER.exception("Failed to initialize OpenAI realtime websocket")
         await websocket.send_json(
@@ -158,11 +243,27 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         async for event in transcriber.receive_events():
             await websocket.send_json(event)
 
+    async def push_periodic_ai_messages() -> None:
+        while True:
+            await asyncio.sleep(5)
+            ai_text = "你好收到请讲"
+            await websocket.send_json(
+                {
+                    "type": "ai_text",
+                    "who": "AI",
+                    "text": ai_text,
+                    "ts": int(time.time() * 1000),
+                }
+            )
+            async for event in speaker.synthesize(ai_text):
+                await websocket.send_json(event)
+
     try:
         audio_task = asyncio.create_task(pipe_audio_to_openai())
         event_task = asyncio.create_task(pipe_transcripts_to_client())
+        ai_push_task = asyncio.create_task(push_periodic_ai_messages())
         done, pending = await asyncio.wait(
-            {audio_task, event_task},
+            {audio_task, event_task, ai_push_task},
             return_when=asyncio.FIRST_COMPLETED,
         )
         for task in pending:
@@ -177,6 +278,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         LOGGER.info("Client websocket disconnected")
     finally:
         await transcriber.close()
+        await speaker.close()
         with contextlib.suppress(RuntimeError):
             await websocket.close()
 
