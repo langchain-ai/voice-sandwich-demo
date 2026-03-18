@@ -302,11 +302,24 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         with contextlib.suppress(asyncio.CancelledError):
             await asyncio.gather(*pending)
         for task in done:
-            if task is run_result_task:
-                raise RuntimeError("SAF run ended unexpectedly")
             exc = task.exception()
-            if exc and not isinstance(exc, WebSocketDisconnect):
-                raise exc
+            if not exc:
+                continue
+            if isinstance(exc, WebSocketDisconnect):
+                continue
+            if task is run_result_task:
+                LOGGER.error("SAF run ended unexpectedly: %s", exc)
+            else:
+                LOGGER.exception("Websocket pipeline task failed", exc_info=exc)
+            with contextlib.suppress(Exception):
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "message": "Session pipeline failed. Please restart session.",
+                        "ts": int(time.time() * 1000),
+                    }
+                )
+            break
     except WebSocketDisconnect:
         LOGGER.info("Client websocket disconnected")
     finally:

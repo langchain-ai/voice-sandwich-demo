@@ -171,6 +171,20 @@ wheels = [
 ]
 
 [[package]]
+name = "ddgs"
+version = "9.11.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click" },
+    { name = "lxml" },
+    { name = "primp" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d7/3c/0ea1d5685bb0cd3607556d76da30e64c158e5d86bb16a3555f232fe0a33f/ddgs-9.11.4.tar.gz", hash = "sha256:445e22d3ffa16f893bfb0a717593bb0f34d1ceb1df68b6ff4ec27b1a3cdf6941", size = 34798, upload-time = "2026-03-14T18:15:18.086Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1e/46/f9412fafdebd4eaba366b5336ee4987995ccc3db1bc450e865a34db5fb63/ddgs-9.11.4-py3-none-any.whl", hash = "sha256:62d4d05b25db5d225a727c0a2771ef40258c1d894582c73dad24c88bf90f918b", size = 43681, upload-time = "2026-03-14T18:15:17.063Z" },
+]
+
+[[package]]
 name = "distro"
 version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -951,6 +965,7 @@ name = "python-voice-agent"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "ddgs" },
     { name = "duckduckgo-search" },
     { name = "fastapi" },
     { name = "langchain" },
@@ -986,6 +1001,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "assemblyai", marker = "extra == 'assemblyai'" },
+    { name = "ddgs", specifier = ">=9.11.4" },
     { name = "duckduckgo-search", specifier = ">=8.1.1" },
     { name = "elevenlabs", marker = "extra == 'elevenlabs'" },
     { name = "fastapi", specifier = ">=0.123.5" },

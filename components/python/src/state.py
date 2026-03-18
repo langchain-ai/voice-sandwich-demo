@@ -83,13 +83,14 @@ TOOLS_BY_NAME = {
 }
 
 
-def _build_llm() -> ChatOpenAI:
+def _build_llm(bind_tools: bool) -> ChatOpenAI:
     model_name = os.getenv("OPENAI_LLM_MODEL", "gpt-4o-mini")
-    return ChatOpenAI(model=model_name, temperature=0).bind_tools(TOOLS)
+    llm = ChatOpenAI(model=model_name, temperature=0)
+    return llm.bind_tools(TOOLS) if bind_tools else llm
 
 
 def build_voice_graph():
-    llm = _build_llm()
+    llm_with_tools = _build_llm(bind_tools=True)
 
     def parse_wait_result(wait_result: Any) -> tuple[bool, dict[str, list[Any]]]:
         timer_fired = False
@@ -109,6 +110,8 @@ def build_voice_graph():
         return Command(goto=Send("llm_node", None))
 
     async def llm_node(ctx: Context, state: VoiceGraphState) -> Command:
+        LOGGER.info("[saf-graph] llm_node wake: state=%s", state)
+
         wait_result = await ctx.wait_for(
             any_of(
                 channel_condition("user_buffered_message", min=1, max=100),
@@ -147,13 +150,12 @@ def build_voice_graph():
             LOGGER.info("[saf-graph] llm_node no channels met; continue waiting")
             return Command(update=state, goto=Send("llm_node", None))
 
-        had_new_user_input = bool(channel_batches.get("user_buffered_message"))
         prompt_context = {
             "recent_user_messages": state["user_messages"][-20:],
             "recent_tool_results": state["tool_completion_results"][-20:],
             "recent_ai_messages": state["llm_messages"][-20:],
         }
-        ai_message = await llm.ainvoke(
+        ai_message = await llm_with_tools.ainvoke(
             [
                 SystemMessage(
                     content=OPENAI_ASSISTANT_SYSTEM_PROMPT
@@ -178,19 +180,13 @@ def build_voice_graph():
 
         sends: list[Send] = [Send("llm_node", None)]
         tool_calls = list(getattr(ai_message, "tool_calls", []) or [])
-        if tool_calls and not had_new_user_input:
-            LOGGER.warning(
-                "[saf-graph] suppressing %s tool calls (no new user input; likely loop)",
-                len(tool_calls),
+        for tool_call in tool_calls:
+            sends.append(Send("tool_call_node", tool_call))
+        if tool_calls:
+            LOGGER.info(
+                "[saf-graph] scheduling tool calls: %s",
+                [tool_call.get("name", "unknown") for tool_call in tool_calls],
             )
-        else:
-            for tool_call in tool_calls:
-                sends.append(Send("tool_call_node", tool_call))
-            if tool_calls:
-                LOGGER.info(
-                    "[saf-graph] scheduling tool calls: %s",
-                    [tool_call.get("name", "unknown") for tool_call in tool_calls],
-                )
 
         return Command(update=state, goto=sends)
 
