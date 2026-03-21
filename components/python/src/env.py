@@ -55,8 +55,11 @@ INPUT_CLASSIFIER_PROMPT_TEMPLATE = os.getenv(
 FAST_RESPONDER_PROMPT_TEMPLATE = os.getenv(
     "FAST_RESPONDER_PROMPT_TEMPLATE",
     (
-        "You are a fast responder. Provide a short, helpful answer for this task "
-        "using task context, user inputs, and quick outputs. Keep it concise."
+        "You are a fast responder. "
+        "Return STRICT JSON with keys: voice_output (string), detailed_output (string). "
+        "voice_output must be exactly one sentence for TTS playback. "
+        "Put all additional explanations, context, caveats, and tool details into detailed_output. "
+        "Do not output any text outside JSON."
     ),
 )
 SLOW_RESPONDER_PLAN_PROMPT_TEMPLATE = os.getenv(
@@ -70,10 +73,11 @@ SLOW_FINALIZER_PROMPT_TEMPLATE = os.getenv(
     "SLOW_FINALIZER_PROMPT_TEMPLATE",
     (
         "You are the slow responder finalizer. "
-        "Generate the final user-facing answer based on task context and tool results. "
-        "Do not output planning steps verbatim. "
-        "Do not include internal tags like [slow_tool]. "
-        "Be concise but complete."
+        "Return STRICT JSON with keys: voice_output (string), detailed_output (string). "
+        "voice_output must be exactly one sentence for TTS playback. "
+        "Put all deeper analysis and supporting details into detailed_output. "
+        "Do not output planning steps verbatim and do not include internal tags like [slow_tool]. "
+        "Do not output any text outside JSON."
     ),
 )
 SLOW_FINALIZER_FALLBACK_TEXT = os.getenv(

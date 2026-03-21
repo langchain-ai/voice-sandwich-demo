@@ -14,15 +14,20 @@ function createDetailedStore() {
   return {
     subscribe,
     append(taskId: number | null, text: string, ts: number) {
-      update((items) => [
-        {
-          id: `detail-${++idCounter}`,
-          taskId,
-          text,
-          ts,
-        },
-        ...items,
-      ].slice(0, 200));
+      const normalizedTs = Number.isFinite(ts) ? ts : Date.now();
+      update((items) =>
+        [
+          {
+            id: `detail-${++idCounter}`,
+            taskId,
+            text,
+            ts: normalizedTs,
+          },
+          ...items,
+        ]
+          .sort((a, b) => b.ts - a.ts)
+          .slice(0, 200)
+      );
     },
     clear() {
       set([]);

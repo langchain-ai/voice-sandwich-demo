@@ -110,6 +110,19 @@ def _extract_json(text: str) -> dict[str, Any]:
         return {}
 
 
+def _extract_voice_detail_payload(text: str) -> tuple[str, str]:
+    payload = _extract_json(text)
+    if not payload:
+        return text.strip(), ""
+    voice = str(payload.get("voice_output") or "").strip()
+    detail = str(payload.get("detailed_output") or "").strip()
+    if not voice and isinstance(payload.get("voice"), str):
+        voice = str(payload.get("voice") or "").strip()
+    if not detail and isinstance(payload.get("detail"), str):
+        detail = str(payload.get("detail") or "").strip()
+    return voice, detail
+
+
 def _mock_fast_tools(task_id: int, latest_input: str) -> list[str]:
     output = [f"[fast_tool] task={task_id} quick_lookup completed"]
     if "weather" in latest_input.lower() or "天气" in latest_input:
@@ -354,22 +367,43 @@ def build_voice_graph():
             ]
         )
         ai_text = (response.text if hasattr(response, "text") else str(response.content or "")).strip()
-        if not ai_text:
-            ai_text = OPENAI_TOOL_CALL_STATUS_TEXT
+        voice_text, detail_text = _extract_voice_detail_payload(ai_text)
+        if not voice_text:
+            voice_text = OPENAI_TOOL_CALL_STATUS_TEXT
         if tool_outputs:
-            ai_text = f"{ai_text}\n" + "\n".join(tool_outputs)
-        LOGGER.info("[saf-graph] fast_respond_llm text task_id=%s text=%s", task_id, ai_text)
+            tool_detail = "\n".join(tool_outputs)
+            detail_text = f"{detail_text}\n{tool_detail}".strip() if detail_text else tool_detail
 
-        quick_outputs.append(ai_text)
-        state[_task_key(task_id, "user_quick_outputs")] = quick_outputs
-        ctx.send_custom_stream_event(
-            "voice_output_stream",
-            {
-                "task_id": task_id,
-                "text": ai_text,
-                "ts": int(time.time() * 1000),
-            }
+        composed_output = (
+            f"{voice_text}\n{detail_text}".strip() if detail_text else voice_text
+        ).strip()
+        LOGGER.info(
+            "[saf-graph] fast_respond_llm text task_id=%s voice=%s detail=%s",
+            task_id,
+            voice_text,
+            detail_text,
         )
+
+        quick_outputs.append(composed_output)
+        state[_task_key(task_id, "user_quick_outputs")] = quick_outputs
+        if voice_text:
+            ctx.send_custom_stream_event(
+                "voice_output_stream",
+                {
+                    "task_id": task_id,
+                    "text": voice_text,
+                    "ts": int(time.time() * 1000),
+                }
+            )
+        if detail_text:
+            ctx.send_custom_stream_event(
+                "detailed_output_stream",
+                {
+                    "task_id": task_id,
+                    "text": detail_text,
+                    "ts": int(time.time() * 1000),
+                }
+            )
         return Command(update=state, goto=Send(fast_responder, task_id))
 
     async def slow_responder(ctx: Context, task_id: int) -> Command | None:
@@ -488,17 +522,32 @@ def build_voice_graph():
         ).strip()
         if not final_answer:
             final_answer = SLOW_FINALIZER_FALLBACK_TEXT
+        voice_text, detail_text = _extract_voice_detail_payload(final_answer)
+        if not voice_text:
+            voice_text = SLOW_FINALIZER_FALLBACK_TEXT
         slow_outputs = _safe_list(state.get(_task_key(task_id, "user_slow_outputs")))
-        slow_outputs.append(final_answer)
+        composed_output = (
+            f"{voice_text}\n{detail_text}".strip() if detail_text else voice_text
+        ).strip()
+        slow_outputs.append(composed_output)
         state[_task_key(task_id, "user_slow_outputs")] = slow_outputs
         ctx.send_custom_stream_event(
             "voice_output_stream",
             {
                 "task_id": task_id,
-                "text": final_answer,
+                "text": voice_text,
                 "ts": int(time.time() * 1000),
             }
         )
+        if detail_text:
+            ctx.send_custom_stream_event(
+                "detailed_output_stream",
+                {
+                    "task_id": task_id,
+                    "text": detail_text,
+                    "ts": int(time.time() * 1000),
+                }
+            )
         return Command(update=state, goto=Send(slow_responder, task_id))
 
     async def task_inactivity_timeouter(ctx: Context, task_id: int) -> Command | None:

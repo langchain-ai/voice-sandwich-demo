@@ -1,9 +1,6 @@
 <script lang="ts">
   import { detailedStream } from '../stores';
-
-  function formatTs(ts: number): string {
-    return new Date(ts).toLocaleTimeString();
-  }
+  import { formatTime } from '../utils';
 </script>
 
 <div class="bg-white rounded-2xl p-6 border border-gray-200 h-full">
@@ -27,7 +24,7 @@
             Task {item.taskId ?? "-"}
           </div>
           <div class="text-sm text-gray-900 whitespace-pre-wrap leading-relaxed">{item.text}</div>
-          <div class="mt-1 text-[10px] text-gray-400 font-mono">{formatTs(item.ts)}</div>
+          <div class="mt-1 text-[10px] text-gray-400 font-mono">{formatTime(new Date(item.ts))}</div>
         </div>
       {/each}
     {/if}
