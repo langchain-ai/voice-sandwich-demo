@@ -2,7 +2,8 @@
 export type ServerEvent =
   | { type: "stt_chunk"; who: "You"; ts: number; transcript: string }
   | { type: "stt_output"; who: "You"; ts: number; transcript: string }
-  | { type: "ai_text"; who: "AI"; ts: number; text: string }
+  | { type: "voice_output_stream"; ts: number; task_id: number | null; text: string }
+  | { type: "detailed_output_stream"; ts: number; task_id: number | null; text: string }
   | { type: "ai_audio"; who: "AI"; ts: number; audio: string }
   | { type: "ai_audio_end"; who: "AI"; ts: number }
   | { type: "error"; ts: number; message: string }
@@ -57,7 +58,7 @@ export interface LatencyStats {
 // Activity feed item
 export interface ActivityItem {
   id: string;
-  type: "stt" | "agent" | "tts" | "tool";
+  type: "stt" | "agent" | "tts" | "tool" | "detail";
   label: string;
   text: string;
   args?: Record<string, unknown>;

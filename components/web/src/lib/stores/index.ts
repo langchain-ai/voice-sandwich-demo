@@ -6,3 +6,4 @@ export {
   computedStats,
 } from "./pipeline";
 export { activities, logs } from "./activity";
+export { detailedStream } from "./detailed";

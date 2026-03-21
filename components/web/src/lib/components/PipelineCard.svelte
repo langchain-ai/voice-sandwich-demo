@@ -3,11 +3,15 @@
   import Pipeline from './Pipeline.svelte';
   import LatencyWaterfall from './LatencyWaterfall.svelte';
 
+  interface Props {
+    compact?: boolean;
+  }
+  let { compact = false }: Props = $props();
   let isActive = $derived($session.connected || $currentTurn.active);
 </script>
 
 <div
-  class="bg-[#1a1a20] text-gray-100 rounded-2xl p-6 mb-5 transition-opacity duration-300
+  class="bg-[#1a1a20] text-gray-100 rounded-2xl {compact ? 'p-3' : 'p-6'} mb-5 transition-opacity duration-300
          {isActive ? '' : 'opacity-50'}"
 >
   <div class="flex items-center justify-between mb-4">
@@ -23,6 +27,8 @@
   </div>
 
   <Pipeline />
-  <LatencyWaterfall />
+  {#if !compact}
+    <LatencyWaterfall />
+  {/if}
 </div>
 

@@ -5,6 +5,8 @@ import {
   waterfallData,
   activities,
   logs,
+  detailedStream,
+  latencyStats,
 } from "./stores";
 import { get } from "svelte/store";
 import { createAudioCapture } from "./audio";
@@ -19,6 +21,7 @@ export function createVoiceSession(): VoiceSession {
   let ws: WebSocket | null = null;
   const audioCapture = createAudioCapture();
   const audioPlayback = createAudioPlayback();
+  let isUserSpeaking = false;
 
   function handleEvent(event: ServerEvent): void {
     const turn = get(currentTurn);
@@ -47,14 +50,25 @@ export function createVoiceSession(): VoiceSession {
         currentTurn.finishTurn();
         break;
       }
-      case "ai_text": {
+      case "voice_output_stream": {
+        // Always prioritize newest voice output.
+        audioPlayback.stop();
+        audioPlayback.resetScheduling();
         currentTurn.startTurn(event.ts);
         currentTurn.agentStart(event.ts);
         currentTurn.agentChunk(event.ts, event.text);
         activities.add("agent", "AI", `AI: ${event.text}`);
         break;
       }
+      case "detailed_output_stream": {
+        detailedStream.append(event.task_id, event.text, event.ts);
+        activities.add("detail", "Detail", event.text);
+        break;
+      }
       case "ai_audio": {
+        if (isUserSpeaking) {
+          break;
+        }
         if (!turn.active) {
           currentTurn.startTurn(event.ts);
         }
@@ -63,12 +77,14 @@ export function createVoiceSession(): VoiceSession {
         break;
       }
       case "ai_audio_end": {
-        waterfallData.set({ ...get(currentTurn) });
+        const snapshot = { ...get(currentTurn) };
+        waterfallData.set(snapshot);
+        latencyStats.recordTurn(snapshot);
         currentTurn.finishTurn();
         break;
       }
       default:
-        // Ignore non-STT events for this transcribe-only flow.
+        // Ignore unknown events.
         break;
     }
   }
@@ -86,11 +102,24 @@ export function createVoiceSession(): VoiceSession {
       session.connect();
       logs.log("Session started");
       try {
-        await audioCapture.start((chunk) => {
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(chunk);
+        await audioCapture.start(
+          (chunk) => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(chunk);
+            }
+          },
+          {
+            rmsThreshold: Number(import.meta.env.VITE_SPEECH_INTERRUPT_RMS_THRESHOLD ?? 0.04),
+            minSpeechMs: Number(import.meta.env.VITE_SPEECH_INTERRUPT_MIN_MS ?? 1000),
+            onSpeechStateChange: (speaking) => {
+              isUserSpeaking = speaking;
+              if (speaking) {
+                audioPlayback.stop();
+                audioPlayback.resetScheduling();
+              }
+            },
           }
-        });
+        );
         logs.log("Streaming PCM audio to websocket");
       } catch (error) {
         console.error(error);
@@ -113,6 +142,7 @@ export function createVoiceSession(): VoiceSession {
 
     ws.onclose = () => {
       audioCapture.stop();
+      isUserSpeaking = false;
       session.disconnect();
       logs.log("Session ended");
       ws = null;

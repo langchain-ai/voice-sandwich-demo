@@ -17,19 +17,28 @@ from starlette.staticfiles import StaticFiles
 
 load_dotenv()
 
-from state import build_voice_graph
+try:
+    from env import (
+        OPENAI_REALTIME_MODEL,
+        OPENAI_STT_LANGUAGE,
+        OPENAI_STT_MODEL,
+        OPENAI_TTS_LANGUAGE,
+        OPENAI_TTS_RENDER_PROMPT_TEMPLATE,
+        OPENAI_TTS_VOICE,
+    )
+    from state import build_voice_graph
+except ModuleNotFoundError:  # pragma: no cover - package-style import fallback
+    from src.env import (
+        OPENAI_REALTIME_MODEL,
+        OPENAI_STT_LANGUAGE,
+        OPENAI_STT_MODEL,
+        OPENAI_TTS_LANGUAGE,
+        OPENAI_TTS_RENDER_PROMPT_TEMPLATE,
+        OPENAI_TTS_VOICE,
+    )
+    from src.state import build_voice_graph
 
 LOGGER = logging.getLogger("uvicorn.error")
-OPENAI_REALTIME_MODEL = os.getenv("OPENAI_REALTIME_MODEL", "gpt-4o-mini-realtime-preview")
-OPENAI_STT_MODEL = os.getenv("OPENAI_STT_MODEL", "gpt-4o-mini-transcribe")
-OPENAI_RESPONSE_LANGUAGE = os.getenv("OPENAI_RESPONSE_LANGUAGE", "en")
-OPENAI_STT_LANGUAGE = os.getenv("OPENAI_STT_LANGUAGE", OPENAI_RESPONSE_LANGUAGE)
-OPENAI_TTS_VOICE = os.getenv("OPENAI_TTS_VOICE", "alloy")
-OPENAI_TTS_LANGUAGE = os.getenv("OPENAI_TTS_LANGUAGE", OPENAI_RESPONSE_LANGUAGE)
-OPENAI_TTS_RENDER_PROMPT_TEMPLATE = os.getenv(
-    "OPENAI_TTS_RENDER_PROMPT_TEMPLATE",
-    "Read the following text in {language}. Do not add anything else: {text}",
-)
 OPENAI_REALTIME_URL = f"wss://api.openai.com/v1/realtime?model={OPENAI_REALTIME_MODEL}"
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
@@ -234,11 +243,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     LOGGER.info("Client websocket accepted")
 
     handler = await VOICE_GRAPH.astart(
-        {
-            "user_messages": [],
-            "tool_completion_results": [],
-            "llm_messages": [],
-        },
+        {"TaskIdCounter": 0, "TopicIdCounter": 0},
         stream_mode="custom",
     )
     run_result_task = asyncio.create_task(handler.aresult())
@@ -279,7 +284,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 if transcript == last_published_transcript:
                     LOGGER.info("Skip duplicate stt_output publish: %s", transcript)
                     continue
-                await handler.apublish_to_channel("user_buffered_message", transcript)
+                await handler.apublish_to_channel("user_input", transcript)
                 last_published_transcript = transcript
 
     async def pipe_graph_stream_to_client() -> None:
@@ -290,9 +295,14 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     raise RuntimeError("SAF run completed unexpectedly")
                 continue
             if isinstance(stream_event, dict):
-                await websocket.send_json(stream_event)
-                if stream_event.get("type") == "ai_text":
-                    async for tts_event in speaker.synthesize(stream_event.get("text", "")):
+                event_type = stream_event.get("type")
+                if event_type in {"voice_output_stream", "detailed_output_stream"}:
+                    await websocket.send_json(stream_event)
+                if event_type == "voice_output_stream":
+                    text = str(stream_event.get("text", "")).strip()
+                    if not text:
+                        continue
+                    async for tts_event in speaker.synthesize(text):
                         await websocket.send_json(tts_event)
 
     try:
@@ -329,7 +339,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         LOGGER.info("Client websocket disconnected")
     finally:
-        handler.close_stream()
+        handler.close_all_streams()
         if not run_result_task.done():
             run_result_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

@@ -41,7 +41,14 @@ registerProcessor('pcm-processor', PCMProcessor);
 `;
 
 export interface AudioCapture {
-  start: (onChunk: (chunk: ArrayBuffer) => void) => Promise<void>;
+  start: (
+    onChunk: (chunk: ArrayBuffer) => void,
+    options?: {
+      rmsThreshold?: number;
+      minSpeechMs?: number;
+      onSpeechStateChange?: (speaking: boolean) => void;
+    }
+  ) => Promise<void>;
   stop: () => void;
 }
 
@@ -49,8 +56,19 @@ export function createAudioCapture(): AudioCapture {
   let audioContext: AudioContext | null = null;
   let workletNode: AudioWorkletNode | null = null;
   let mediaStream: MediaStream | null = null;
+  let speechInterval: ReturnType<typeof setInterval> | null = null;
+  let analyserNode: AnalyserNode | null = null;
+  let speechStartedAt: number | null = null;
+  let speakingNotified = false;
 
-  async function start(onChunk: (chunk: ArrayBuffer) => void): Promise<void> {
+  async function start(
+    onChunk: (chunk: ArrayBuffer) => void,
+    options?: {
+      rmsThreshold?: number;
+      minSpeechMs?: number;
+      onSpeechStateChange?: (speaking: boolean) => void;
+    }
+  ): Promise<void> {
     // Create AudioContext if needed
     if (!audioContext) {
       audioContext = new AudioContext();
@@ -77,15 +95,54 @@ export function createAudioCapture(): AudioCapture {
     // Create worklet node and connect
     const source = audioContext.createMediaStreamSource(mediaStream);
     workletNode = new AudioWorkletNode(audioContext, "pcm-processor");
+    analyserNode = audioContext.createAnalyser();
+    analyserNode.fftSize = 1024;
 
     workletNode.port.onmessage = (event) => {
       onChunk(event.data);
     };
 
+    source.connect(analyserNode);
     source.connect(workletNode);
+
+    const rmsThreshold = options?.rmsThreshold ?? 0.04;
+    const minSpeechMs = options?.minSpeechMs ?? 1000;
+    const onSpeechStateChange = options?.onSpeechStateChange;
+    const samples = new Float32Array(analyserNode.fftSize);
+    speechInterval = setInterval(() => {
+      if (!analyserNode) return;
+      analyserNode.getFloatTimeDomainData(samples);
+      let sum = 0;
+      for (const sample of samples) {
+        sum += sample * sample;
+      }
+      const rms = Math.sqrt(sum / samples.length);
+      const now = Date.now();
+      if (rms >= rmsThreshold) {
+        speechStartedAt = speechStartedAt ?? now;
+        if (!speakingNotified && now - speechStartedAt >= minSpeechMs) {
+          speakingNotified = true;
+          onSpeechStateChange?.(true);
+        }
+      } else {
+        speechStartedAt = null;
+        if (speakingNotified) {
+          speakingNotified = false;
+          onSpeechStateChange?.(false);
+        }
+      }
+    }, 100);
   }
 
   function stop(): void {
+    if (speechInterval) {
+      clearInterval(speechInterval);
+      speechInterval = null;
+    }
+    speechStartedAt = null;
+    speakingNotified = false;
+    analyserNode = null;
+
     if (workletNode) {
       workletNode.disconnect();
       workletNode = null;

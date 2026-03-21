@@ -1015,7 +1015,7 @@ requires-dist = [
     { name = "openai", specifier = ">=2.29.0" },
     { name = "python-dotenv" },
     { name = "python-multipart", specifier = ">=0.0.22" },
-    { name = "saf-python-sdk", specifier = ">=0.1.4" },
+    { name = "saf-python-sdk", specifier = "==0.1.5" },
     { name = "tavily-python", specifier = ">=0.7.23" },
     { name = "uvicorn", specifier = ">=0.38.0" },
     { name = "websockets" },
@@ -1242,10 +1242,10 @@ wheels = [
 
 [[package]]
 name = "saf-python-sdk"
-version = "0.1.4"
+version = "0.1.5"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8b/43/fbb2f778eb2ec7db7742188ea89d55812892bf38e04c38f6447d2a77646c/saf_python_sdk-0.1.4-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:3c45fe1ba2285667c90ef63a4158cdfee024a4ca1951ba7bd6499e47668cf042", size = 591190, upload-time = "2026-03-18T18:41:37.257Z" },
+    { url = "https://files.pythonhosted.org/packages/dd/06/ef4e288ee88ad74d1172eebfe8bde114cb8f789ce46efb2b1b25c1ad97ba/saf_python_sdk-0.1.5-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:cdc224b0d7617f88aec822963ec11ba8e7d48d9e6f5f75f41ed31514962b842e", size = 623502, upload-time = "2026-03-20T22:32:16.348Z" },
 ]
 
 [[package]]

@@ -7,6 +7,7 @@
     agent: '🤖',
     tts: '🔊',
     tool: '🔧',
+    detail: '🧠',
   };
 
   const colorMap: Record<string, { bg: string; label: string }> = {
@@ -14,6 +15,7 @@
     agent: { bg: 'bg-purple-500/10', label: 'text-purple-500' },
     tts: { bg: 'bg-orange-500/10', label: 'text-orange-500' },
     tool: { bg: 'bg-blue-500/10', label: 'text-blue-500' },
+    detail: { bg: 'bg-emerald-500/10', label: 'text-emerald-600' },
   };
 </script>
 

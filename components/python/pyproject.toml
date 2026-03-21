@@ -14,7 +14,7 @@ dependencies = [
     "openai>=2.29.0",
     "python-dotenv",
     "python-multipart>=0.0.22",
-    "saf-python-sdk>=0.1.4",
+    "saf-python-sdk==0.1.5",
     "tavily-python>=0.7.23",
     "uvicorn>=0.38.0",
     "websockets",
