@@ -41,6 +41,11 @@ INPUT_CLASSIFIER_PROMPT_TEMPLATE = os.getenv(
         "is_new_task (bool), task_id (int|null), task_name (str), task_description (str), "
         "topic_id (int|null), needs_slow_responder (bool), latest_input (str). "
         "Pick an existing task id if user input belongs to one. "
+        "Set needs_slow_responder=true when user asks for deep, careful, detailed, step-by-step, "
+        "serious, rigorous, comprehensive, planning, analysis, or long-horizon work. "
+        "Examples include phrases like: '认真', '详细', '深入', '系统地', '一步一步', '完整方案', "
+        "'carefully', 'in detail', 'step by step', 'comprehensive plan'. "
+        "For short/simple requests, set needs_slow_responder=false. "
         "Use concise values."
     ),
 )

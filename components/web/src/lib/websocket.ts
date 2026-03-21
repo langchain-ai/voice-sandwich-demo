@@ -62,7 +62,6 @@ export function createVoiceSession(): VoiceSession {
       }
       case "detailed_output_stream": {
         detailedStream.append(event.task_id, event.text, event.ts);
-        activities.add("detail", "Detail", event.text);
         break;
       }
       case "ai_audio": {

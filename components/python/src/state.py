@@ -148,8 +148,9 @@ def build_voice_graph():
         user_inputs = [str(v).strip() for v in channel_batches.get("user_input", []) if str(v).strip()]
         LOGGER.info("[saf-graph] input_receiver got user_input count=%s", len(user_inputs))
         sends: list[Send] = [Send(input_receiver, None)]
-        sends.extend(Send(input_classifier, text) for text in user_inputs)
+        
         if user_inputs:
+            sends.extend(Send(input_classifier, text) for text in user_inputs)
             sends.append(Send(input_post_classifier, None))
         else:
             raise RuntimeError("No user input received")
