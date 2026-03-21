@@ -27,6 +27,8 @@ try:
         OPENAI_FAST_MODEL,
         OPENAI_SLOW_MODEL,
         OPENAI_TOOL_CALL_STATUS_TEXT,
+        SLOW_FINALIZER_PROMPT_TEMPLATE,
+        SLOW_FINALIZER_FALLBACK_TEXT,
         SLOW_RESPONDER_PLAN_PROMPT_TEMPLATE,
         SLOW_TOOL_SLEEP_SECONDS,
         TASK_INACTIVITY_TIMEOUT_SECONDS,
@@ -43,9 +45,12 @@ except ModuleNotFoundError:  # pragma: no cover - package-style import fallback
         OPENAI_FAST_MODEL,
         OPENAI_SLOW_MODEL,
         OPENAI_TOOL_CALL_STATUS_TEXT,
+        SLOW_FINALIZER_PROMPT_TEMPLATE,
+        SLOW_FINALIZER_FALLBACK_TEXT,
         SLOW_RESPONDER_PLAN_PROMPT_TEMPLATE,
         SLOW_TOOL_SLEEP_SECONDS,
         TASK_INACTIVITY_TIMEOUT_SECONDS,
+        TOPIC_DETAILS_MAX_ITEMS,
         TOPIC_SUMMARY_PROMPT_TEMPLATE,
     )
 
@@ -454,8 +459,35 @@ def build_voice_graph():
                 ),
             )
 
-        slow_result = await _mock_slow_tool(task_id, plan)
-        final_answer = f"{slow_result}\nPlan complete for task {task_id}."
+        slow_result = await _mock_slow_tool(task_id, "multi-step plan execution completed")
+        user_inputs = _safe_list(state.get(_task_key(task_id, "user_inputs")))
+        final_response = await slow_llm.ainvoke(
+            [
+                SystemMessage(
+                    content=SLOW_FINALIZER_PROMPT_TEMPLATE
+                ),
+                HumanMessage(
+                    content=json.dumps(
+                        {
+                            "task_id": task_id,
+                            "task_name": state.get(_task_key(task_id, "name")),
+                            "task_description": state.get(_task_key(task_id, "description")),
+                            "latest_user_input": user_inputs[-1] if user_inputs else "",
+                            "plan": plan,
+                            "slow_tool_result": slow_result,
+                        },
+                        ensure_ascii=False,
+                    )
+                ),
+            ]
+        )
+        final_answer = (
+            final_response.text
+            if hasattr(final_response, "text")
+            else str(final_response.content or "")
+        ).strip()
+        if not final_answer:
+            final_answer = SLOW_FINALIZER_FALLBACK_TEXT
         slow_outputs = _safe_list(state.get(_task_key(task_id, "user_slow_outputs")))
         slow_outputs.append(final_answer)
         state[_task_key(task_id, "user_slow_outputs")] = slow_outputs

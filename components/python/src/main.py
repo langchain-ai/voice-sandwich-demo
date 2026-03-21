@@ -22,6 +22,9 @@ try:
         OPENAI_REALTIME_MODEL,
         OPENAI_STT_LANGUAGE,
         OPENAI_STT_MODEL,
+        OPENAI_VAD_PREFIX_PADDING_MS,
+        OPENAI_VAD_SILENCE_DURATION_MS,
+        OPENAI_VAD_THRESHOLD,
         OPENAI_TTS_LANGUAGE,
         OPENAI_TTS_RENDER_PROMPT_TEMPLATE,
         OPENAI_TTS_VOICE,
@@ -32,6 +35,9 @@ except ModuleNotFoundError:  # pragma: no cover - package-style import fallback
         OPENAI_REALTIME_MODEL,
         OPENAI_STT_LANGUAGE,
         OPENAI_STT_MODEL,
+        OPENAI_VAD_PREFIX_PADDING_MS,
+        OPENAI_VAD_SILENCE_DURATION_MS,
+        OPENAI_VAD_THRESHOLD,
         OPENAI_TTS_LANGUAGE,
         OPENAI_TTS_RENDER_PROMPT_TEMPLATE,
         OPENAI_TTS_VOICE,
@@ -76,9 +82,12 @@ class OpenAIRealtimeTranscriber:
 
     async def connect(self) -> None:
         LOGGER.info(
-            "Connecting OpenAI realtime model=%s stt_model=%s",
+            "Connecting OpenAI realtime model=%s stt_model=%s vad(threshold=%s,prefix_ms=%s,silence_ms=%s)",
             OPENAI_REALTIME_MODEL,
             OPENAI_STT_MODEL,
+            OPENAI_VAD_THRESHOLD,
+            OPENAI_VAD_PREFIX_PADDING_MS,
+            OPENAI_VAD_SILENCE_DURATION_MS,
         )
         self._ws = await websockets.connect(
             OPENAI_REALTIME_URL,
@@ -97,7 +106,12 @@ class OpenAIRealtimeTranscriber:
                             "model": OPENAI_STT_MODEL,
                             "language": self.language,
                         },
-                        "turn_detection": {"type": "server_vad"},
+                        "turn_detection": {
+                            "type": "server_vad",
+                            "threshold": OPENAI_VAD_THRESHOLD,
+                            "prefix_padding_ms": OPENAI_VAD_PREFIX_PADDING_MS,
+                            "silence_duration_ms": OPENAI_VAD_SILENCE_DURATION_MS,
+                        },
                     },
                 }
             )

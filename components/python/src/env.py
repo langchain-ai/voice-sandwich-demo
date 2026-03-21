@@ -11,6 +11,9 @@ OPENAI_SLOW_MODEL = os.getenv("OPENAI_SLOW_MODEL", "gpt-4o-mini")
 OPENAI_REALTIME_MODEL = os.getenv("OPENAI_REALTIME_MODEL", "gpt-4o-mini-realtime-preview")
 OPENAI_STT_MODEL = os.getenv("OPENAI_STT_MODEL", "gpt-4o-mini-transcribe")
 OPENAI_STT_LANGUAGE = os.getenv("OPENAI_STT_LANGUAGE", OPENAI_RESPONSE_LANGUAGE)
+OPENAI_VAD_THRESHOLD = float(os.getenv("OPENAI_VAD_THRESHOLD", "0.5"))
+OPENAI_VAD_PREFIX_PADDING_MS = int(os.getenv("OPENAI_VAD_PREFIX_PADDING_MS", "300"))
+OPENAI_VAD_SILENCE_DURATION_MS = int(os.getenv("OPENAI_VAD_SILENCE_DURATION_MS", "1200"))
 OPENAI_TTS_VOICE = os.getenv("OPENAI_TTS_VOICE", "alloy")
 OPENAI_TTS_LANGUAGE = os.getenv("OPENAI_TTS_LANGUAGE", OPENAI_RESPONSE_LANGUAGE)
 OPENAI_TTS_RENDER_PROMPT_TEMPLATE = os.getenv(
@@ -62,6 +65,20 @@ SLOW_RESPONDER_PLAN_PROMPT_TEMPLATE = os.getenv(
         "You are a slow planner. Produce a compact multi-step plan to solve the task. "
         "Return plain text with numbered steps."
     ),
+)
+SLOW_FINALIZER_PROMPT_TEMPLATE = os.getenv(
+    "SLOW_FINALIZER_PROMPT_TEMPLATE",
+    (
+        "You are the slow responder finalizer. "
+        "Generate the final user-facing answer based on task context and tool results. "
+        "Do not output planning steps verbatim. "
+        "Do not include internal tags like [slow_tool]. "
+        "Be concise but complete."
+    ),
+)
+SLOW_FINALIZER_FALLBACK_TEXT = os.getenv(
+    "SLOW_FINALIZER_FALLBACK_TEXT",
+    "I have completed the deeper analysis and prepared the final result.",
 )
 TOPIC_SUMMARY_PROMPT_TEMPLATE = os.getenv(
     "TOPIC_SUMMARY_PROMPT_TEMPLATE",
