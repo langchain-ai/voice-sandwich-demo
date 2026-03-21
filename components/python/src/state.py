@@ -129,12 +129,16 @@ def build_voice_graph():
     async def init_node(state: VoiceAgentState) -> Command:
         state["TaskIdCounter"] = int(state.get("TaskIdCounter") or 0)
         state["TopicIdCounter"] = int(state.get("TopicIdCounter") or 0)
+        LOGGER.info(
+            "[saf-graph] init_node counters task=%s topic=%s",
+            state["TaskIdCounter"],
+            state["TopicIdCounter"],
+        )
         return Command(
             update=state,
             goto=[
-                Send("input_receiver", None),
-                Send("input_post_classifier", None),
-                Send("topic_memory_merger", None),
+                Send(input_receiver, None),
+                Send(topic_memory_merger, None),
             ],
         )
 
@@ -142,11 +146,17 @@ def build_voice_graph():
         wait_result = await ctx.wait_for(channel_condition("user_input", min=1, max=100))
         _, channel_batches = _parse_wait_result(wait_result)
         user_inputs = [str(v).strip() for v in channel_batches.get("user_input", []) if str(v).strip()]
-        sends: list[Send] = [Send("input_receiver", None)]
-        sends.extend(Send("input_classifier", text) for text in user_inputs)
+        LOGGER.info("[saf-graph] input_receiver got user_input count=%s", len(user_inputs))
+        sends: list[Send] = [Send(input_receiver, None)]
+        sends.extend(Send(input_classifier, text) for text in user_inputs)
+        if user_inputs:
+            sends.append(Send(input_post_classifier, None))
+        else:
+            raise RuntimeError("No user input received")
         return Command(update=state, goto=sends)
 
-    async def input_classifier(ctx: Context, state: VoiceAgentState, user_input: str) -> None:
+    async def input_classifier(ctx: Context, user_input: str, state: VoiceAgentState) -> None:
+        LOGGER.info("[saf-graph] input_classifier input=%s", user_input)
         task_counter = int(state.get("TaskIdCounter") or 0)
         topic_counter = int(state.get("TopicIdCounter") or 0)
         existing_tasks: list[dict[str, Any]] = []
@@ -212,6 +222,7 @@ def build_voice_graph():
             "needs_slow_responder": bool(parsed.get("needs_slow_responder", False)),
             "latest_input": str(parsed.get("latest_input") or user_input),
         }
+        LOGGER.info("[saf-graph] input_classifier output=%s", classification)
         ctx.publish_to_channel("user_input_classification", classification)
 
     async def input_post_classifier(ctx: Context, state: VoiceAgentState) -> Command:
@@ -222,18 +233,23 @@ def build_voice_graph():
             )
         )
         timer_fired, channel_batches = _parse_wait_result(wait_result)
+        LOGGER.info(
+            "[saf-graph] input_post_classifier wake timer=%s cls_count=%s",
+            timer_fired,
+            len(channel_batches.get("user_input_classification", [])),
+        )
         if timer_fired and not channel_batches:
             ctx.send_custom_stream_event(
+                "voice_output_stream",
                 {
-                    "type": "voice_output_stream",
                     "text": INPUT_POST_TIMEOUT_TEXT,
                     "task_id": None,
                     "ts": int(time.time() * 1000),
                 }
             )
-            return Command(update=state, goto=Send("input_post_classifier", None))
+            return Command(update=state, goto=Send(input_post_classifier, None))
 
-        sends: list[Send] = [Send("input_post_classifier", None)]
+        sends: list[Send] = []
         for item in channel_batches.get("user_input_classification", []):
             if not isinstance(item, dict):
                 continue
@@ -258,11 +274,12 @@ def build_voice_graph():
 
                 sends.extend(
                     [
-                        Send("fast_responder", task_id),
-                        Send("slow_responder", task_id),
-                        Send("task_inactivity_timeouter", task_id),
+                        Send(fast_responder, task_id),
+                        Send(slow_responder, task_id),
+                        Send(task_inactivity_timeouter, task_id),
                     ]
                 )
+                LOGGER.info("[saf-graph] input_post_classifier created task_id=%s", task_id)
 
             user_inputs = _safe_list(state.get(_task_key(task_id, "user_inputs")))
             latest_input = str(item.get("latest_input") or "").strip()
@@ -277,10 +294,16 @@ def build_voice_graph():
             if bool(item.get("needs_slow_responder", False)):
                 ctx.publish_to_channel(f"slow_responder_trigger_{task_id}", True)
             ctx.publish_to_channel(f"task_activity_{task_id}", True)
+            LOGGER.info(
+                "[saf-graph] input_post_classifier trigger task_id=%s slow=%s",
+                task_id,
+                bool(item.get("needs_slow_responder", False)),
+            )
 
-        return Command(update=state, goto=sends)
+        return Command(update=state, goto=sends) if sends else Command(update=state)
 
     async def fast_responder(ctx: Context, task_id: int) -> Command | None:
+        LOGGER.info("[saf-graph] fast_responder wait task_id=%s", task_id)
         wait_result = await ctx.wait_for(
             any_of(
                 channel_condition(f"fast_responder_trigger_{task_id}", min=1, max=100),
@@ -288,13 +311,20 @@ def build_voice_graph():
             )
         )
         _, channel_batches = _parse_wait_result(wait_result)
+        LOGGER.info(
+            "[saf-graph] fast_responder wake task_id=%s trigger=%s done=%s",
+            task_id,
+            bool(channel_batches.get(f"fast_responder_trigger_{task_id}")),
+            bool(channel_batches.get(f"fast_responder_done_{task_id}")),
+        )
         if channel_batches.get(f"fast_responder_done_{task_id}"):
             return None
         if channel_batches.get(f"fast_responder_trigger_{task_id}"):
-            return Command(goto=Send("fast_respond_llm", task_id))
-        return Command(goto=Send("fast_responder", task_id))
+            return Command(goto=Send(fast_respond_llm, task_id))
+        return Command(goto=Send(fast_responder, task_id))
 
-    async def fast_respond_llm(ctx: Context, state: VoiceAgentState, task_id: int) -> Command:
+    async def fast_respond_llm(ctx: Context, task_id: int, state: VoiceAgentState) -> Command:
+        LOGGER.info("[saf-graph] fast_respond_llm start task_id=%s", task_id)
         user_inputs = _safe_list(state.get(_task_key(task_id, "user_inputs")))
         quick_outputs = _safe_list(state.get(_task_key(task_id, "user_quick_outputs")))
         latest_input = user_inputs[-1] if user_inputs else ""
@@ -322,20 +352,22 @@ def build_voice_graph():
             ai_text = OPENAI_TOOL_CALL_STATUS_TEXT
         if tool_outputs:
             ai_text = f"{ai_text}\n" + "\n".join(tool_outputs)
+        LOGGER.info("[saf-graph] fast_respond_llm text task_id=%s text=%s", task_id, ai_text)
 
         quick_outputs.append(ai_text)
         state[_task_key(task_id, "user_quick_outputs")] = quick_outputs
         ctx.send_custom_stream_event(
+            "voice_output_stream",
             {
-                "type": "voice_output_stream",
                 "task_id": task_id,
                 "text": ai_text,
                 "ts": int(time.time() * 1000),
             }
         )
-        return Command(update=state, goto=Send("fast_responder", task_id))
+        return Command(update=state, goto=Send(fast_responder, task_id))
 
     async def slow_responder(ctx: Context, task_id: int) -> Command | None:
+        LOGGER.info("[saf-graph] slow_responder wait task_id=%s", task_id)
         wait_result = await ctx.wait_for(
             any_of(
                 channel_condition(f"slow_responder_trigger_{task_id}", min=1, max=100),
@@ -343,13 +375,20 @@ def build_voice_graph():
             )
         )
         _, channel_batches = _parse_wait_result(wait_result)
+        LOGGER.info(
+            "[saf-graph] slow_responder wake task_id=%s trigger=%s done=%s",
+            task_id,
+            bool(channel_batches.get(f"slow_responder_trigger_{task_id}")),
+            bool(channel_batches.get(f"slow_responder_done_{task_id}")),
+        )
         if channel_batches.get(f"slow_responder_done_{task_id}"):
             return None
         if channel_batches.get(f"slow_responder_trigger_{task_id}"):
-            return Command(goto=Send("slow_respond_llm", task_id))
-        return Command(goto=Send("slow_responder", task_id))
+            return Command(goto=Send(slow_respond_llm, task_id))
+        return Command(goto=Send(slow_responder, task_id))
 
-    async def slow_respond_llm(ctx: Context, state: VoiceAgentState, task_id: int) -> Command:
+    async def slow_respond_llm(ctx: Context, task_id: int, state: VoiceAgentState) -> Command:
+        LOGGER.info("[saf-graph] slow_respond_llm start task_id=%s", task_id)
         user_inputs = _safe_list(state.get(_task_key(task_id, "user_inputs")))
         slow_outputs = _safe_list(state.get(_task_key(task_id, "user_slow_outputs")))
         response = await slow_llm.ainvoke(
@@ -372,10 +411,11 @@ def build_voice_graph():
         plan = (response.text if hasattr(response, "text") else str(response.content or "")).strip()
         if not plan:
             plan = "1. Gather more detail.\n2. Execute the plan.\n3. Return result."
+        LOGGER.info("[saf-graph] slow_respond_llm plan task_id=%s plan=%s", task_id, plan)
 
         ctx.send_custom_stream_event(
+            "detailed_output_stream",
             {
-                "type": "detailed_output_stream",
                 "task_id": task_id,
                 "text": plan,
                 "ts": int(time.time() * 1000),
@@ -383,21 +423,22 @@ def build_voice_graph():
         )
         return Command(
             update=state,
-            goto=Send("slow_plan_executor", {"task_id": task_id, "plan": plan, "step": 1}),
+            goto=Send(slow_plan_executor, {"task_id": task_id, "plan": plan, "step": 1}),
         )
 
     async def slow_plan_executor(
-        ctx: Context, state: VoiceAgentState, payload: dict[str, Any]
+        ctx: Context, payload: dict[str, Any], state: VoiceAgentState
     ) -> Command:
         task_id = int(payload.get("task_id", 0))
         step = int(payload.get("step", 1))
         plan = str(payload.get("plan", "")).strip() or "No plan"
+        LOGGER.info("[saf-graph] slow_plan_executor task_id=%s step=%s", task_id, step)
 
         if step <= 2:
             progress = f"Executing slow plan step {step}/2 for task {task_id}..."
             ctx.send_custom_stream_event(
+                "detailed_output_stream",
                 {
-                    "type": "detailed_output_stream",
                     "task_id": task_id,
                     "text": progress,
                     "ts": int(time.time() * 1000),
@@ -407,7 +448,7 @@ def build_voice_graph():
             return Command(
                 update=state,
                 goto=Send(
-                    "slow_plan_executor",
+                    slow_plan_executor,
                     {"task_id": task_id, "plan": plan, "step": step + 1},
                 ),
             )
@@ -418,16 +459,17 @@ def build_voice_graph():
         slow_outputs.append(final_answer)
         state[_task_key(task_id, "user_slow_outputs")] = slow_outputs
         ctx.send_custom_stream_event(
+            "voice_output_stream",
             {
-                "type": "voice_output_stream",
                 "task_id": task_id,
                 "text": final_answer,
                 "ts": int(time.time() * 1000),
             }
         )
-        return Command(update=state, goto=Send("slow_responder", task_id))
+        return Command(update=state, goto=Send(slow_responder, task_id))
 
     async def task_inactivity_timeouter(ctx: Context, task_id: int) -> Command | None:
+        LOGGER.info("[saf-graph] task_inactivity_timeouter wait task_id=%s", task_id)
         wait_result = await ctx.wait_for(
             any_of(
                 channel_condition(f"task_activity_{task_id}", min=1, max=100),
@@ -435,18 +477,28 @@ def build_voice_graph():
             )
         )
         timer_fired, channel_batches = _parse_wait_result(wait_result)
+        LOGGER.info(
+            "[saf-graph] task_inactivity_timeouter wake task_id=%s timer=%s activity=%s",
+            task_id,
+            timer_fired,
+            bool(channel_batches.get(f"task_activity_{task_id}")),
+        )
         if channel_batches.get(f"task_activity_{task_id}"):
-            return Command(goto=Send("task_inactivity_timeouter", task_id))
+            return Command(goto=Send(task_inactivity_timeouter, task_id))
         if timer_fired:
             ctx.publish_to_channel(f"fast_responder_done_{task_id}", True)
             ctx.publish_to_channel(f"slow_responder_done_{task_id}", True)
             ctx.publish_to_channel("task_done", task_id)
             return None
-        return Command(goto=Send("task_inactivity_timeouter", task_id))
+        return Command(goto=Send(task_inactivity_timeouter, task_id))
 
     async def topic_memory_merger(ctx: Context, state: VoiceAgentState) -> Command:
         wait_result = await ctx.wait_for(channel_condition("task_done", min=1, max=100))
         _, channel_batches = _parse_wait_result(wait_result)
+        LOGGER.info(
+            "[saf-graph] topic_memory_merger task_done_count=%s",
+            len(channel_batches.get("task_done", [])),
+        )
 
         for value in channel_batches.get("task_done", []):
             task_id = int(value)
@@ -514,9 +566,11 @@ def build_voice_graph():
             state[_task_key(task_id, "user_slow_outputs")] = None
             state[_task_key(task_id, "topic_id")] = None
 
-        return Command(update=state, goto=Send("topic_memory_merger", None))
+        return Command(update=state, goto=Send(topic_memory_merger, None))
 
     graph = AdvancedStateGraph(VoiceAgentState)
+    graph.add_custom_output_stream("voice_output_stream", dict)
+    graph.add_custom_output_stream("detailed_output_stream", dict)
     graph.add_async_channel("user_input", str)
     graph.add_async_channel("user_input_classification", dict)
     graph.add_async_channel("task_done", int)

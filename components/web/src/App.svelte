@@ -11,13 +11,12 @@
     <div class="lg:col-span-3">
       <Controls onStart={() => voiceSession.start()} onStop={() => voiceSession.stop()} />
       <PipelineCard compact={true} />
+      <div class="mt-5">
+        <Console />
+      </div>
     </div>
     <div class="lg:col-span-6">
       <DetailedCanvas />
-      <div class="mt-5">
-        <PipelineCard />
-      </div>
-      <Console />
     </div>
     <div class="lg:col-span-3">
       <ActivityFeed />

@@ -288,22 +288,38 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 last_published_transcript = transcript
 
     async def pipe_graph_stream_to_client() -> None:
-        while True:
-            stream_event = await handler.receive_stream()
-            if not stream_event:
-                if run_result_task.done():
-                    raise RuntimeError("SAF run completed unexpectedly")
-                continue
-            if isinstance(stream_event, dict):
-                event_type = stream_event.get("type")
-                if event_type in {"voice_output_stream", "detailed_output_stream"}:
-                    await websocket.send_json(stream_event)
-                if event_type == "voice_output_stream":
-                    text = str(stream_event.get("text", "")).strip()
+        async def consume_stream(stream_name: str) -> None:
+            while True:
+                stream_event = await handler.receive_stream(stream_name)
+                if not stream_event:
+                    if run_result_task.done():
+                        raise RuntimeError("SAF run completed unexpectedly")
+                    continue
+                payload = stream_event if isinstance(stream_event, dict) else {"value": stream_event}
+                payload.setdefault("type", stream_name)
+                LOGGER.info("[ws] stream=%s payload=%s", stream_name, payload)
+                await websocket.send_json(payload)
+                if stream_name == "voice_output_stream":
+                    text = str(payload.get("text", "")).strip()
                     if not text:
                         continue
                     async for tts_event in speaker.synthesize(text):
                         await websocket.send_json(tts_event)
+
+        voice_task = asyncio.create_task(consume_stream("voice_output_stream"))
+        detail_task = asyncio.create_task(consume_stream("detailed_output_stream"))
+        done, pending = await asyncio.wait(
+            {voice_task, detail_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.gather(*pending)
+        for task in done:
+            exc = task.exception()
+            if exc:
+                raise exc
 
     try:
         audio_task = asyncio.create_task(pipe_audio_to_openai())
