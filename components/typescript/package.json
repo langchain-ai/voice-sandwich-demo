@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@ericedouard/vad-node-realtime": "^0.2.0",
-    "@hono/node-server": "^1.19.10",
+    "@hono/node-server": "^1.19.13",
     "@hono/node-ws": "^1.2.0",
     "@langchain/anthropic": "^1.2.1",
     "@langchain/core": "^1.1.28",
@@ -21,7 +21,7 @@
     "@types/ws": "^8.18.1",
     "dotenv": "^17.2.3",
     "ffmpeg-static": "^5.3.0",
-    "hono": "^4.12.7",
+    "hono": "^4.12.12",
     "langchain": "^1.2.27",
     "langsmith": "^0.4.6",
     "onnxruntime-node": "^1.23.2",
