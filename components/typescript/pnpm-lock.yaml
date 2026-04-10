@@ -19,19 +19,19 @@ importers:
         version: 1.2.0(@hono/node-server@1.19.13(hono@4.12.12))(hono@4.12.12)
       '@langchain/anthropic':
         specifier: ^1.2.1
-        version: 1.2.1(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13)))
+        version: 1.2.1(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3))
       '@langchain/core':
         specifier: ^1.1.28
-        version: 1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))
+        version: 1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3)
       '@langchain/google-genai':
         specifier: ^2.0.0
-        version: 2.0.2(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13)))
+        version: 2.0.2(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3))
       '@langchain/langgraph':
         specifier: ^1.0.2
-        version: 1.1.5(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13)))(zod@4.1.13)
+        version: 1.1.5(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3))(zod@4.1.13)
       '@langchain/openai':
         specifier: ^1.1.3
-        version: 1.1.3(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13)))(ws@8.18.3)
+        version: 1.1.3(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3))(ws@8.18.3)
       '@types/uuid':
         specifier: ^11.0.0
         version: 11.0.0
@@ -49,10 +49,10 @@ importers:
         version: 4.12.12
       langchain:
         specifier: ^1.2.27
-        version: 1.2.27(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13)))(openai@6.9.1(ws@8.18.3)(zod@4.1.13))
+        version: 1.2.27(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3))(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3)
       langsmith:
-        specifier: ^0.4.6
-        version: 0.4.6(openai@6.9.1(ws@8.18.3)(zod@4.1.13))
+        specifier: ^0.5.18
+        version: 0.5.18(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3)
       onnxruntime-node:
         specifier: ^1.23.2
         version: 1.23.2
@@ -415,9 +415,6 @@ packages:
   '@types/node@24.10.1':
     resolution: {integrity: sha512-GNWcUTRBgIRJD5zj+Tq0fKOJ5XZajIiBroOF0yvj2bSU1WvNdYS/dn9UxwsujGW4JX06dnHyjV2y9rRaybH0iQ==}
 
-  '@types/uuid@10.0.0':
-    resolution: {integrity: sha512-7gqG38EyHgyP1S+7+xomFtL+ZNHcKv6DwNaCZmJmo1vgMugyF3TCnXVg4t1uk89mLNwnLtnY3TpOpCOyp1/xHQ==}
-
   '@types/uuid@11.0.0':
     resolution: {integrity: sha512-HVyk8nj2m+jcFRNazzqyVKiZezyhDKrGUA3jlEcg/nZ6Ms+qHwocba1Y/AaVaznJTAM9xpdFSh+ptbNrhOGvZA==}
     deprecated: This is a stub types definition. uuid provides its own type definitions, so you do not need this installed.
@@ -555,10 +552,6 @@ packages:
     resolution: {integrity: sha512-oKnbhFyRIXpUuez8iBMmyEa4nbj4IOQyuhc/wy9kY7/WVPcwIO9VA668Pu8RkO7+0G76SLROeyw9CpQ061i4mA==}
     engines: {node: '>=10'}
 
-  chalk@5.6.2:
-    resolution: {integrity: sha512-7NzBL0rN6fMUW+f7A6Io4h40qQlG+xGmtMxfbnH/K7TAtt8JQWVQK+6g0UXKMeVJoyV5EkkNsErQ8pVD3bLHbA==}
-    engines: {node: ^12.17.0 || ^14.13 || >=16.0.0}
-
   color-convert@2.0.1:
     resolution: {integrity: sha512-RRECPsj7iu/xb5oKYcsFHSppFNnsj/52OVTRKb4zP5onXwVF3zVmmToNcOfGC+CRDpfK/U584fMg38ZHCaElKQ==}
     engines: {node: '>=7.0.0'}
@@ -572,9 +565,6 @@ packages:
   concat-stream@2.0.0:
     resolution: {integrity: sha512-MWufYdFw53ccGjCA+Ol7XJYpAlW6/prSMzuPOTRnJGcGzuhLn4Scrz7qf6o8bROZ514ltazcIFJZevcfbo0x7A==}
     engines: {'0': node >= 6.0}
-
-  console-table-printer@2.15.0:
-    resolution: {integrity: sha512-SrhBq4hYVjLCkBVOWaTzceJalvn5K1Zq5aQA6wXC/cYjI3frKWNPEMK3sZsJfNNQApvCQmgBcc13ZKmFj8qExw==}
 
   cross-spawn@7.0.6:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
@@ -839,13 +829,14 @@ packages:
     peerDependencies:
       '@langchain/core': ^1.1.28
 
-  langsmith@0.4.6:
-    resolution: {integrity: sha512-9aYop1fEwA8RgFuvv8XPeV9ieeSnKnVRn3bNemkFQCyINLAxfNHC547bVMW8i8MuS1F1pgKwopqhLNf80qS1bQ==}
+  langsmith@0.5.18:
+    resolution: {integrity: sha512-3zuZUWffTHQ+73EAwnodADtf534VNEZUpXr9jC12qyG8/IQuJET7PRsCpTb9wX2lmBspakwLUpqpj3tNm/0bVA==}
     peerDependencies:
       '@opentelemetry/api': '*'
       '@opentelemetry/exporter-trace-otlp-proto': '*'
       '@opentelemetry/sdk-trace-base': '*'
       openai: '*'
+      ws: '>=7'
     peerDependenciesMeta:
       '@opentelemetry/api':
         optional: true
@@ -855,22 +846,7 @@ packages:
         optional: true
       openai:
         optional: true
-
-  langsmith@0.5.7:
-    resolution: {integrity: sha512-FjYf2oBGMoSXnaT4SRaFguIiGJaonZ5VKWKJDPl9awLZjz2RkN29AcQWceecSINVzXzTvtRWPOjAWT+XggqNNg==}
-    peerDependencies:
-      '@opentelemetry/api': '*'
-      '@opentelemetry/exporter-trace-otlp-proto': '*'
-      '@opentelemetry/sdk-trace-base': '*'
-      openai: '*'
-    peerDependenciesMeta:
-      '@opentelemetry/api':
-        optional: true
-      '@opentelemetry/exporter-trace-otlp-proto':
-        optional: true
-      '@opentelemetry/sdk-trace-base':
-        optional: true
-      openai:
+      ws:
         optional: true
 
   levn@0.4.1:
@@ -948,8 +924,8 @@ packages:
     resolution: {integrity: sha512-RwFpb72c/BhQLEXIZ5K2e+AhgNVmIejGlTgiB9MzZ0e93GRvqZ7uSi0dvRF7/XIXDeNkra2fNHBxTyPDGySpjQ==}
     engines: {node: '>=8'}
 
-  p-queue@9.1.0:
-    resolution: {integrity: sha512-O/ZPaXuQV29uSLbxWBGGZO1mCQXV2BLIwUr59JUU9SoH76mnYvtms7aafH/isNSNGwuEfP6W/4xD0/TJXxrizw==}
+  p-queue@9.1.2:
+    resolution: {integrity: sha512-ktsDOALzTYTWWF1PbkNVg2rOt+HaOaMWJMUnt7T3qf5tvZ1L8dBW3tObzprBcXNMKkwj+yFSLqHso0x+UFcJXw==}
     engines: {node: '>=20'}
 
   p-retry@7.1.1:
@@ -1035,9 +1011,6 @@ packages:
   shebang-regex@3.0.0:
     resolution: {integrity: sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A==}
     engines: {node: '>=8'}
-
-  simple-wcswidth@1.1.2:
-    resolution: {integrity: sha512-j7piyCjAeTDSjzTSQ7DokZtMNwNlEAyxqSZeCS+CXH7fJ4jx3FuJ/mTW3mE+6JLs4VJBbcll0Kjn+KXI5t21Iw==}
 
   sprintf-js@1.1.3:
     resolution: {integrity: sha512-Oo+0REFV59/rz3gfJNKQiBlwfHaSESl1pcGyABQsnnIfWOFt6JNj5gCog2U6MLZ//IGYD+nA8nI+mTShREReaA==}
@@ -1319,20 +1292,20 @@ snapshots:
 
   '@humanwhocodes/retry@0.4.3': {}
 
-  '@langchain/anthropic@1.2.1(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13)))':
+  '@langchain/anthropic@1.2.1(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3))':
     dependencies:
       '@anthropic-ai/sdk': 0.71.0(zod@4.1.13)
-      '@langchain/core': 1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))
+      '@langchain/core': 1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3)
       zod: 4.1.13
 
-  '@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))':
+  '@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3)':
     dependencies:
       '@cfworker/json-schema': 4.1.1
       ansi-styles: 5.2.0
       camelcase: 6.3.0
       decamelize: 1.2.0
       js-tiktoken: 1.0.21
-      langsmith: 0.5.7(openai@6.9.1(ws@8.18.3)(zod@4.1.13))
+      langsmith: 0.5.18(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3)
       mustache: 4.2.0
       p-queue: 6.6.2
       uuid: 10.0.0
@@ -1342,32 +1315,33 @@ snapshots:
       - '@opentelemetry/exporter-trace-otlp-proto'
       - '@opentelemetry/sdk-trace-base'
       - openai
+      - ws
 
-  '@langchain/google-genai@2.0.2(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13)))':
+  '@langchain/google-genai@2.0.2(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3))':
     dependencies:
       '@google/generative-ai': 0.24.1
-      '@langchain/core': 1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))
+      '@langchain/core': 1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3)
       uuid: 11.1.0
 
-  '@langchain/langgraph-checkpoint@1.0.0(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13)))':
+  '@langchain/langgraph-checkpoint@1.0.0(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3))':
     dependencies:
-      '@langchain/core': 1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))
+      '@langchain/core': 1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3)
       uuid: 10.0.0
 
-  '@langchain/langgraph-sdk@2.0.0(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13)))':
+  '@langchain/langgraph-sdk@2.0.0(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3))':
     dependencies:
       '@types/json-schema': 7.0.15
-      p-queue: 9.1.0
+      p-queue: 9.1.2
       p-retry: 7.1.1
       uuid: 13.0.0
     optionalDependencies:
-      '@langchain/core': 1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))
+      '@langchain/core': 1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3)
 
-  '@langchain/langgraph@1.1.5(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13)))(zod@4.1.13)':
+  '@langchain/langgraph@1.1.5(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3))(zod@4.1.13)':
     dependencies:
-      '@langchain/core': 1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))
-      '@langchain/langgraph-checkpoint': 1.0.0(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13)))
-      '@langchain/langgraph-sdk': 2.0.0(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13)))
+      '@langchain/core': 1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3)
+      '@langchain/langgraph-checkpoint': 1.0.0(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3))
+      '@langchain/langgraph-sdk': 2.0.0(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3))
       '@standard-schema/spec': 1.1.0
       uuid: 10.0.0
       zod: 4.1.13
@@ -1375,9 +1349,9 @@ snapshots:
       - react
       - react-dom
 
-  '@langchain/openai@1.1.3(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13)))(ws@8.18.3)':
+  '@langchain/openai@1.1.3(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3))(ws@8.18.3)':
     dependencies:
-      '@langchain/core': 1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))
+      '@langchain/core': 1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3)
       js-tiktoken: 1.0.21
       openai: 6.9.1(ws@8.18.3)(zod@4.1.13)
       zod: 4.1.13
@@ -1395,8 +1369,6 @@ snapshots:
   '@types/node@24.10.1':
     dependencies:
       undici-types: 7.16.0
-
-  '@types/uuid@10.0.0': {}
 
   '@types/uuid@11.0.0':
     dependencies:
@@ -1557,8 +1529,6 @@ snapshots:
       ansi-styles: 4.3.0
       supports-color: 7.2.0
 
-  chalk@5.6.2: {}
-
   color-convert@2.0.1:
     dependencies:
       color-name: 1.1.4
@@ -1573,10 +1543,6 @@ snapshots:
       inherits: 2.0.4
       readable-stream: 3.6.2
       typedarray: 0.0.6
-
-  console-table-printer@2.15.0:
-    dependencies:
-      simple-wcswidth: 1.1.2
 
   cross-spawn@7.0.6:
     dependencies:
@@ -1852,12 +1818,12 @@ snapshots:
     dependencies:
       json-buffer: 3.0.1
 
-  langchain@1.2.27(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13)))(openai@6.9.1(ws@8.18.3)(zod@4.1.13)):
+  langchain@1.2.27(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3))(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3):
     dependencies:
-      '@langchain/core': 1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))
-      '@langchain/langgraph': 1.1.5(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13)))(zod@4.1.13)
-      '@langchain/langgraph-checkpoint': 1.0.0(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13)))
-      langsmith: 0.5.7(openai@6.9.1(ws@8.18.3)(zod@4.1.13))
+      '@langchain/core': 1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3)
+      '@langchain/langgraph': 1.1.5(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3))(zod@4.1.13)
+      '@langchain/langgraph-checkpoint': 1.0.0(@langchain/core@1.1.28(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3))
+      langsmith: 0.5.18(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3)
       uuid: 10.0.0
       zod: 4.1.13
     transitivePeerDependencies:
@@ -1867,29 +1833,16 @@ snapshots:
       - openai
       - react
       - react-dom
+      - ws
       - zod-to-json-schema
 
-  langsmith@0.4.6(openai@6.9.1(ws@8.18.3)(zod@4.1.13)):
+  langsmith@0.5.18(openai@6.9.1(ws@8.18.3)(zod@4.1.13))(ws@8.18.3):
     dependencies:
-      '@types/uuid': 10.0.0
-      chalk: 4.1.2
-      console-table-printer: 2.15.0
       p-queue: 6.6.2
-      semver: 7.7.4
       uuid: 10.0.0
     optionalDependencies:
       openai: 6.9.1(ws@8.18.3)(zod@4.1.13)
-
-  langsmith@0.5.7(openai@6.9.1(ws@8.18.3)(zod@4.1.13)):
-    dependencies:
-      '@types/uuid': 10.0.0
-      chalk: 5.6.2
-      console-table-printer: 2.15.0
-      p-queue: 6.6.2
-      semver: 7.7.4
-      uuid: 10.0.0
-    optionalDependencies:
-      openai: 6.9.1(ws@8.18.3)(zod@4.1.13)
+      ws: 8.18.3
 
   levn@0.4.1:
     dependencies:
@@ -1959,7 +1912,7 @@ snapshots:
       eventemitter3: 4.0.7
       p-timeout: 3.2.0
 
-  p-queue@9.1.0:
+  p-queue@9.1.2:
     dependencies:
       eventemitter3: 5.0.4
       p-timeout: 7.0.1
@@ -2030,8 +1983,6 @@ snapshots:
       shebang-regex: 3.0.0
 
   shebang-regex@3.0.0: {}
-
-  simple-wcswidth@1.1.2: {}
 
   sprintf-js@1.1.3: {}
 
