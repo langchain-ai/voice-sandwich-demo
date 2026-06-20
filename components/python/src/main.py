@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import os
 from pathlib import Path
 from typing import AsyncIterator
 from uuid import uuid4
@@ -9,13 +10,15 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from langchain.agents import create_agent
-from langchain.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableGenerator
 from langgraph.checkpoint.memory import InMemorySaver
 from starlette.staticfiles import StaticFiles
 
 from assemblyai_stt import AssemblyAISTT
-from components.python.src.cartesia_tts import CartesiaTTS
+from cartesia_tts import CartesiaTTS
+from elevenlabs_tts import ElevenLabsTTS
+from geminI_tts import GeminiTTS
 from events import (
     AgentChunkEvent,
     AgentEndEvent,
@@ -47,6 +50,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Configure TTS provider from environment variable
+# Options: "cartesia", "elevenlabs", "gemini"
+TTS_PROVIDER = os.getenv("TTS_PROVIDER", "cartesia").lower()
+
 
 def add_to_order(item: str, quantity: int) -> str:
     """Add an item to the customer's sandwich order."""
@@ -70,7 +77,7 @@ ${CARTESIA_TTS_SYSTEM_PROMPT}
 """
 
 agent = create_agent(
-    model="anthropic:claude-haiku-4-5",
+    model="openai:gpt-4o-mini",
     tools=[add_to_order, confirm_order],
     system_prompt=system_prompt,
     checkpointer=InMemorySaver(),
@@ -214,14 +221,14 @@ async def _tts_stream(
     Transform stream: Voice Events → Voice Events (with Audio)
 
     This function takes a stream of upstream voice agent events and processes them.
-    When agent_chunk events arrive, it sends the text to Cartesia for TTS synthesis.
+    When agent_chunk events arrive, it sends the text to the TTS provider for synthesis.
     Audio is streamed back as tts_chunk events as it's generated.
     All upstream events are passed through unchanged.
 
     It uses merge_async_iters to combine two concurrent streams:
     - process_upstream(): Iterates through incoming events, yields them for
-      passthrough, and sends agent text chunks to Cartesia for synthesis.
-    - tts.receive_events(): Yields audio chunks from Cartesia as they are
+      passthrough, and sends agent text chunks to the TTS provider for synthesis.
+    - tts.receive_events(): Yields audio chunks from the TTS provider as they are
       synthesized.
 
     The merge utility runs both iterators concurrently, yielding items from
@@ -234,16 +241,34 @@ async def _tts_stream(
     Yields:
         All upstream events plus tts_chunk events for synthesized audio
     """
-    tts = CartesiaTTS()
+    # Initialize the appropriate TTS provider based on configuration
+    if TTS_PROVIDER == "gemini":
+        print("[INFO] Using Gemini TTS")
+        tts = GeminiTTS(
+            voice_name=os.getenv("GEMINI_VOICE", "Puck"),
+            model_id=os.getenv("GEMINI_MODEL", "gemini-2.5-flash-preview-tts"),
+        )
+    elif TTS_PROVIDER == "elevenlabs":
+        print("[INFO] Using ElevenLabs TTS")
+        tts = ElevenLabsTTS(
+            voice_id=os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"),
+            model_id=os.getenv("ELEVENLABS_MODEL", "eleven_multilingual_v2"),
+        )
+    else:  # Default to Cartesia
+        print("[INFO] Using Cartesia TTS")
+        tts = CartesiaTTS(
+            voice_id=os.getenv("CARTESIA_VOICE_ID", "f6ff7c0c-e396-40a9-a70b-f7607edb6937"),
+            model_id=os.getenv("CARTESIA_MODEL", "sonic-3"),
+        )
 
     async def process_upstream() -> AsyncIterator[VoiceAgentEvent]:
         """
-        Process upstream events, yielding them while sending text to Cartesia.
+        Process upstream events, yielding them while sending text to the TTS provider.
 
         This async generator serves two purposes:
         1. Pass through all upstream events (stt_chunk, stt_output, agent_chunk)
            so downstream consumers can observe the full event stream.
-        2. Buffer agent_chunk text and send to Cartesia when agent_end arrives.
+        2. Buffer agent_chunk text and send to TTS provider when agent_end arrives.
            This ensures the full response is sent at once for better TTS quality.
         """
         buffer: list[str] = []
@@ -253,7 +278,7 @@ async def _tts_stream(
             # Buffer agent text chunks
             if event.type == "agent_chunk":
                 buffer.append(event.text)
-            # Send all buffered text to Cartesia when agent finishes
+            # Send all buffered text to TTS provider when agent finishes
             if event.type == "agent_end":
                 await tts.send_text("".join(buffer))
                 buffer = []
@@ -264,7 +289,7 @@ async def _tts_stream(
         async for event in merge_async_iters(process_upstream(), tts.receive_events()):
             yield event
     finally:
-        # Cleanup: close the WebSocket connection to Cartesia
+        # Cleanup: close the connection to the TTS provider
         await tts.close()
 
 
